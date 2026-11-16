@@ -5,12 +5,23 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location -LiteralPath $root
 
+function Has-Sdk([string]$exe) {
+    try {
+        $sdks = & $exe --list-sdks 2>$null
+        return (($sdks -join '').Trim().Length -gt 0)
+    } catch { return $false }
+}
+
 function Find-Dotnet {
-    $cmd = Get-Command dotnet -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    # 先看当前用户目录里的 SDK：机器级 C:\Program Files\dotnet 常常只装了运行时，
+    # 直接按 PATH 取会拿到没有 SDK 的那份，publish 就会报 "No .NET SDKs were found"。
+    $cands = @()
     $local = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe'
-    if (Test-Path -LiteralPath $local) { return $local }
-    throw '找不到 dotnet：请安装 .NET 8 SDK（仅运行时无法编译）'
+    if (Test-Path -LiteralPath $local) { $cands += $local }
+    $cmd = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($cmd) { $cands += $cmd.Source }
+    foreach ($c in $cands) { if (Has-Sdk $c) { return $c } }
+    throw '找不到带 SDK 的 dotnet：请安装 .NET 8 SDK（仅运行时无法编译）'
 }
 
 $dotnet = Find-Dotnet

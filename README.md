@@ -149,7 +149,7 @@ SimpleHttpServer.cs          内置 HTTP 服务（页面 + 探针）
 UiTheme.cs                   浅色主题与自绘控件
 Resources/index.html         浏览器客户端（单文件，无外部依赖）
 install*.ps1 / build-release.ps1 / uninstall.ps1   安装与构建
-docs/NOTES-历史调研记录.md    开发过程中的实测记录与取舍（含 VDD 长尾问题）
+docs/                        开发文档（设计、审查、验证记录）与历史调研笔记
 ```
 
 ## 安全须知
