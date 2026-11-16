@@ -66,6 +66,7 @@ public sealed class ClientPipelineHost : IPipelineHost
     private readonly object _lock = new();
     private bool _keyFrameRequested = true;
     private int _w = 1280, _h = 720;
+    private volatile byte[]? _init;   // 最近一次 fMP4 init segment（MSE 客户端重连时要重发）
 
     public ClientPipelineHost(StreamServer server, IWebSocketConnection conn)
     {
@@ -74,7 +75,15 @@ public sealed class ClientPipelineHost : IPipelineHost
     }
 
     /// <summary>把这条管线转接到新连接（设备重连时用）。</summary>
-    public void Retarget(IWebSocketConnection conn) => _conn = conn;
+    public void Retarget(IWebSocketConnection conn)
+    {
+        _conn = conn;
+        // MSE 客户端重连时只能拿到"当前时刻往后"的分片，没有 init segment 就永远解不出画面；
+        // 顺手要一个关键帧，否则要等到下一个自然关键帧才有可解码的起点。
+        var init = _init;
+        if (init != null && _server.IsMseClient(conn)) _server.SendMseInit(conn, init);
+        RequestKeyFrame();
+    }
 
     /// <summary>
     /// 发帧前消耗带宽配额（与共享管线同一份限流）。
@@ -89,6 +98,9 @@ public sealed class ClientPipelineHost : IPipelineHost
 
     public void BroadcastFrame(byte[] data, bool keyFrame)
     {
+        // 这条连接实际走的是 JPEG / MSE 通道时不要再喂裸 H.264：
+        // 客户端会直接丢弃，带宽却照扣一份（等于把它们自己的配额白白吃掉一半）。
+        if (_server.IsJpegClient(_conn) || _server.IsMseClient(_conn)) return;
         var packet = new byte[data.Length + 1];
         packet[0] = keyFrame ? (byte)1 : (byte)0;
         Buffer.BlockCopy(data, 0, packet, 1, data.Length);
@@ -98,6 +110,7 @@ public sealed class ClientPipelineHost : IPipelineHost
 
     public void BroadcastJpeg(byte[] jpeg)
     {
+        if (!_server.IsJpegClient(_conn)) return;
         var packet = new byte[jpeg.Length + 1];
         packet[0] = 2;
         Buffer.BlockCopy(jpeg, 0, packet, 1, jpeg.Length);
@@ -106,6 +119,7 @@ public sealed class ClientPipelineHost : IPipelineHost
     }
     public void BroadcastFmp4(byte[] fragment)
     {
+        if (!_server.IsMseClient(_conn)) return;
         var packet = new byte[fragment.Length + 1];
         packet[0] = 3;
         Buffer.BlockCopy(fragment, 0, packet, 1, fragment.Length);
@@ -113,7 +127,11 @@ public sealed class ClientPipelineHost : IPipelineHost
         _server.SendBinary(_conn, packet);
     }
 
-    public void SetMseInit(byte[] init) => _server.SendMseInit(_conn, init);
+    public void SetMseInit(byte[] init)
+    {
+        _init = init;
+        _server.SendMseInit(_conn, init);
+    }
 
     public void UpdateVideoInfo(VideoEncoder encoder)
     {

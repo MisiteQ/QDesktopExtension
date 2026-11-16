@@ -170,6 +170,12 @@ public sealed class StreamPipeline
         w = Math.Clamp((int)(w * fit) / 2 * 2, 320, H264MaxWidth);
         h = Math.Clamp((int)(h * fit) / 2 * 2, 240, H264MaxHeight);
 
+        // 手机浏览器在地址栏收起 / 滚动 / 横竖屏过渡时会连续上报不同的可视高度
+        // （实测 884 → 772 → 648 → 884，90 秒 12 次）。原来 16px 的绝对门槛拦不住这种抖动，
+        // 每次都重建一遍编码器（甚至改虚拟屏模式），画面跟着闪、CPU 抖。
+        // 改成按比例的迟滞：变化不到 8% 就当同一个尺寸，只接受真正的布局变化。
+        if (SameSize(w, h)) return;
+
         if (_source.Virtual)
         {
             ResizeVirtual(w, h);
@@ -178,11 +184,23 @@ public sealed class StreamPipeline
             return;
         }
 
-        if (Math.Abs(_forceW - w) < 16 && Math.Abs(_forceH - h) < 16) return;
         _forceW = w;
         _forceH = h;
         _viewPend = true;
         _logger.Info($"输出分辨率跟随客户端屏幕: {w}x{h}（下一帧生效）");
+    }
+
+    /// <summary>
+    /// 新上报的尺寸和当前目标是否"基本一样"（相对误差 8% 以内）。
+    /// 宽度、高度都接近才算一样，避免只改一边时被吞掉。
+    /// </summary>
+    private bool SameSize(int w, int h)
+    {
+        var curW = _forceW;
+        var curH = _forceH;
+        if (curW <= 0 || curH <= 0) return false;
+        static bool Near(int a, int b) => Math.Abs(a - b) <= Math.Max(24, b * 0.08);
+        return Near(w, curW) && Near(h, curH);
     }
 
     /// <summary>按客户端屏幕尺寸调整扩展屏画布（对面这块屏多大，这块扩展屏就多大）。</summary>
