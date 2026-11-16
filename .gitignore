@@ -34,3 +34,7 @@ appconfig.json.corrupted-*
 # 系统文件
 Thumbs.db
 Desktop.ini
+
+# 本地临时测试脚本
+_*.js
+_*.json
