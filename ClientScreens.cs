@@ -125,15 +125,15 @@ public sealed class ClientScreenManager : IDisposable
         List<(string Device, string Ip, bool Orphan)> raw;
         lock (this)
         {
-            raw = _sessions.Values.Select(s => (s.DeviceName, s.Ip, false))
-                .Concat(_orphans.Select(s => (s.DeviceName, s.Ip, true)))
+            raw = _sessions.Values.Select(s => (Device: s.DeviceName, Ip: s.Ip, Orphan: false))
+                .Concat(_orphans.Select(s => (Device: s.DeviceName, Ip: s.Ip, Orphan: true)))
                 .ToList();
         }
         // 屏幕尺寸查询放锁外：Attach 建屏期间也持着这把锁，锁内再查 Screen 会互相拖慢
         return raw.Select(t =>
         {
-            var scr = Screen.AllScreens.FirstOrDefault(x => x.DeviceName == t.DeviceName);
-            return new ClientScreenInfo(t.DeviceName, t.Ip, t.Orphan,
+            var scr = Screen.AllScreens.FirstOrDefault(x => x.DeviceName == t.Device);
+            return new ClientScreenInfo(t.Device, t.Ip, t.Orphan,
                 scr != null ? $"{scr.Bounds.Width}x{scr.Bounds.Height}" : "未枚举");
         }).ToList();
     }

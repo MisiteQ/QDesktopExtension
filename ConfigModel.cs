@@ -219,7 +219,7 @@ public class ConfigModel
         {
             cfg = JsonSerializer.Deserialize<ConfigModel>(txt, Options) ?? new ConfigModel();
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
             // 旧版本把窗口标题里的 \r 之类的控制字符原样写进了 JSON，导致整份配置非法。
             // 这里去掉裸控制字符再试一次；成功就顺手写回干净的文件，用户不用手工改配置。

@@ -245,9 +245,11 @@ public sealed class AppHost
 
     private static VideoTarget InitialTarget(ConfigModel cfg, ScreenRect rect)
     {
-        // 宽高按同一系数缩放：超宽屏 / 竖屏直接压宽或压高会拉伸画面；上限 0 = 跟随显示器
-        var capW = cfg.MaxWidth > 0 ? cfg.MaxWidth : rect.Width;
-        var capH = cfg.MaxHeight > 0 ? cfg.MaxHeight : rect.Height;
+        // 宽高按同一系数缩放：超宽屏 / 竖屏直接压宽或压高会拉伸画面；上限 0 = 跟随显示器。
+        // 同时压进 H.264 Level 4.0（SPS 写的是 4.0）：超过 1920x1080 手机硬解直接失败，
+        // 客户端会在"建独立屏之前"先吃一口共享画面就报 H.264 解码失败
+        var capW = Math.Min(cfg.MaxWidth > 0 ? cfg.MaxWidth : rect.Width, 1920);
+        var capH = Math.Min(cfg.MaxHeight > 0 ? cfg.MaxHeight : rect.Height, 1080);
         var fit = Math.Min(1.0, Math.Min((double)capW / rect.Width, (double)capH / rect.Height));
         var w = Even(Math.Max(2, (int)Math.Round(rect.Width * fit)));
         var h = Even(Math.Max(2, (int)Math.Round(rect.Height * fit)));

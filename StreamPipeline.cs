@@ -25,6 +25,11 @@ public sealed class StreamPipeline
     private Fmp4Muxer? _muxer;
     private long _muxStartTicks;
     private int _muxGen = -1;
+
+    // H.264 Level 4.0 的物理上限：SPS 里写的是 Level 4.0，超过 1920x1080 就是非法码流，
+    // 手机硬解会拒绝或直接让渲染进程崩溃（表现为页面反复闪屏重载）
+    private const int H264MaxWidth = 1920;
+    private const int H264MaxHeight = 1080;
     private IntPtr _jpegBuf = IntPtr.Zero;   // JPEG 线程自己的像素快照
     private Thread? _jpegThread;             // JPEG 通道线程（停机时要等它退干净再释放缓冲）
     private long _jpegFrames;                // 统计周期内的 JPEG 帧数（纯 JPEG 客户端时用它报统计）
@@ -156,9 +161,14 @@ public sealed class StreamPipeline
         // 面板里的"分辨率上限"是硬约束：客户端上报再大也不越界，且按同一系数缩，避免拉伸；0 = 跟随显示器
         var capW = _cfg.MaxWidth > 0 ? _cfg.MaxWidth : w;
         var capH = _cfg.MaxHeight > 0 ? _cfg.MaxHeight : h;
+        // 再叠一层 H.264 的物理上限：SPS 里写的是 Level 4.0（avc1.42C0xx），
+        // 分辨率超过 1920x1080 就是非法码流，手机硬解会直接拒绝甚至让渲染进程崩掉
+        // （实测手机报 2560x1600 → 编码 2304x1440 → 页面反复重载闪屏）
+        capW = Math.Min(capW, H264MaxWidth);
+        capH = Math.Min(capH, H264MaxHeight);
         var fit = Math.Min(1.0, Math.Min((double)capW / w, (double)capH / h));
-        w = Math.Clamp((int)(w * fit) / 2 * 2, 320, 3840);
-        h = Math.Clamp((int)(h * fit) / 2 * 2, 240, 2160);
+        w = Math.Clamp((int)(w * fit) / 2 * 2, 320, H264MaxWidth);
+        h = Math.Clamp((int)(h * fit) / 2 * 2, 240, H264MaxHeight);
 
         if (_source.Virtual)
         {
@@ -567,8 +577,12 @@ public sealed class StreamPipeline
             else
             {
                 var cap = _worker.Capture;
-                var cw = Math.Min(cap.Width, _cfg.MaxWidth > 0 ? _cfg.MaxWidth : cap.Width);
-                var ch = Math.Max(2, (int)Math.Round(cap.Height * (double)cw / cap.Width));
+                // 同样要压在 Level 4.0 以内：4K 屏按 MaxWidth 直接编 2560 宽也是非法码流
+                var boxW = _cfg.MaxWidth > 0 ? Math.Min(_cfg.MaxWidth, H264MaxWidth) : H264MaxWidth;
+                var boxH = _cfg.MaxHeight > 0 ? Math.Min(_cfg.MaxHeight, H264MaxHeight) : H264MaxHeight;
+                var fit = Math.Min(1.0, Math.Min((double)boxW / cap.Width, (double)boxH / cap.Height));
+                var cw = Math.Max(2, (int)Math.Round(cap.Width * fit) / 2 * 2);
+                var ch = Math.Max(2, (int)Math.Round(cap.Height * fit) / 2 * 2);
                 Reconfigure(new VideoTarget(cw, ch, _cfg.BitRate));
             }
         }

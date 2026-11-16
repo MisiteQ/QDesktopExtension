@@ -282,6 +282,16 @@ let vdec = null;
 let jpegMode = false;             // 浏览器不支持 WebCodecs 时走服务端 JPEG 静态帧
 let mseMode = false;              // 支持 MediaSource 但没 WebCodecs 时走 fMP4（手机常见）
 let forceJpeg = typeof VideoDecoder === 'undefined' && !hasMse();
+// 上次 H.264 在这台设备上失败过（画面出不来 / 一帧都没有连接就断）：先走兼容通道。
+// 必须存 localStorage —— 手机浏览器解码崩掉会整页重载，内存里的标志位跟着清空，
+// 于是"重载→再试 H.264→再崩"形成死循环（表现为画面闪几次后彻底没反应）。
+// 只记 1 小时：服务端修好后能自动回到 H.264，坏设备也不会无限重试。
+// 想立刻重试 H.264：地址后面加 ?h264=1。
+try {
+  const v = parseInt(localStorage.getItem('vds.jpeg') || '0', 10) || 0;
+  if (v && Date.now() - v < 3600 * 1000 && !/(?:^|[?&])h264=1/.test(location.search)) forceJpeg = true;
+} catch (e) {}
+let h264Fails = 0;                // 本次页面加载内"H.264 没出画面就断开"的次数
 let decodedOnce = false;
 let frameWatch = null;
 let jpegFallbackDone = false;
@@ -491,6 +501,13 @@ function fitStage() {
 }
 
 // 把这块屏的分辨率告诉服务端：对面这块屏多大，这块"显示器"就多大
+// 上限 1920x1080：H.264 Level 4.0（avc1.42C0xx）的硬上限，多数手机硬解也只到 1080p。
+// 之前手机报 2560x1600，服务端就按 2304x1440 编码，解码器直接拒绝/崩溃 → 黑屏闪退。
+function clampViewport(w, h) {
+  const cw = 1920, ch = 1080;
+  const fit = Math.min(1, cw / w, ch / h);
+  return [Math.round(w * fit), Math.round(h * fit)];
+}
 let viewportTimer = null;
 function sendViewport() {
   if (viewportTimer) { clearTimeout(viewportTimer); viewportTimer = null; }
@@ -498,10 +515,12 @@ function sendViewport() {
     viewportTimer = null;
     if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = Math.round((window.innerWidth || 0) * dpr);
-    const h = Math.round((window.innerHeight || 0) * dpr);
-    if (w >= 320 && h >= 240) sendJson({ type: 'viewport', w: w, h: h, fill: fillMode });
-    else if (!fillMode) sendJson({ type: 'viewport', w: 0, h: 0, fill: false });
+    const vw = Math.round((window.innerWidth || 0) * dpr);
+    const vh = Math.round((window.innerHeight || 0) * dpr);
+    if (vw >= 320 && vh >= 240) {
+      const s = clampViewport(vw, vh);
+      sendJson({ type: 'viewport', w: s[0], h: s[1], fill: fillMode });
+    } else if (!fillMode) sendJson({ type: 'viewport', w: 0, h: 0, fill: false });
   }, 400);
 }
 window.addEventListener('resize', fitStage);
@@ -604,6 +623,18 @@ function ensureDecoder() {
     const cfg = { codec: codecStr, optimizeForLatency: true };
     if (descBytes && descBytes.length) cfg.description = descBytes;
     vdec.configure(cfg);
+    // 配置成功不代表能解：个别安卓机对 Level/分辨率组合会在解码时才炸（整页重载）。
+    // 这里同步问一次浏览器，明确不支持就直接走兼容通道，不拿画面去赌。
+    try {
+      if (VideoDecoder.isConfigSupported) {
+        VideoDecoder.isConfigSupported(cfg).then(res => {
+          if (!res || !res.supported) {
+            resetDecoder();
+            fallbackToJpeg('此设备不支持 ' + cfg.codec + ' ' + videoW + 'x' + videoH);
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {}
     return true;
   } catch (e) {
     console.error('configure', e);
@@ -828,21 +859,25 @@ function fallbackToJpeg(reason) {
   if (jpegFallbackDone || jpegMode) return;
   jpegFallbackDone = true;
   forceJpeg = true;
+  // 记住这台设备只能用兼容通道：页面重载（解码崩溃时浏览器会整页重载）后也不会再试 H.264
+  try { localStorage.setItem('vds.jpeg', String(Date.now())); } catch (e) {}
   stopMse();
   if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+  beacon('fallback->jpeg: ' + reason);
   showNotice(reason + '，正在切换到兼容模式（静态帧，画面跟手但帧率较低）…');
   try { ws.close(); } catch (e) {}
 }
 
 // JPEG 帧：createImageBitmap 解码后画到画布；出错时悄悄跳过（下一帧马上到）
 let jpegBusy = false;
-// 以“收到真实画面帧”为准进入已连接状态（兜住个别浏览器丢 auth_ok 文本帧）
+// 以"收到真实画面帧"为准进入已连接状态（兜住个别浏览器丢 auth_ok 文本帧）
 function autoConnected(why) {
   if (connected) return;
   connected = true;
   if (authTimer) { clearTimeout(authTimer); authTimer = null; }
   if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
-  jpegMode = true;
+  // 不要在这里把 jpegMode 置 true：H.264 的关键帧也可能先于 auth_ok 到达，
+  // 误标成 JPEG 会让后续 video_info / 帧分发全按静态帧处理
   hideLogin();
   showHud(true);
   beacon('auto-connected via ' + why);
@@ -850,6 +885,7 @@ function autoConnected(why) {
 
 function drawJpeg(bytes) {  if (jpegBusy) return;            // 上一张还没画完，直接丢这一张，避免排队
   jpegBusy = true;
+  jpegMode = true;                  // 收到 JPEG 帧本身就说明这条连接走兼容通道（auth_ok 可能被吞掉）
   const blob = new Blob([bytes], { type: 'image/jpeg' });
   createImageBitmap(blob).then(bmp => {
     if (bmp.width && bmp.height && (cv.width !== bmp.width || cv.height !== bmp.height)) {
@@ -931,9 +967,10 @@ function connect(pwd) {
     lastAuthPayload = { type: 'auth', password: pwd, codec: mode };
     // 告诉电脑"我这块屏多大"，扩展屏就按这个尺寸出画（不拉伸、不变形）
     try {
-      const w = Math.round(Math.min(2560, (visualViewport ? visualViewport.width : innerWidth) * (devicePixelRatio || 1)));
-      const h = Math.round(Math.min(1600, (visualViewport ? visualViewport.height : innerHeight) * (devicePixelRatio || 1)));
-      sendJson({ type: 'viewport', w: w, h: h });
+      const s = clampViewport(
+        Math.round(Math.min(2560, (visualViewport ? visualViewport.width : innerWidth) * (devicePixelRatio || 1))),
+        Math.round(Math.min(1600, (visualViewport ? visualViewport.height : innerHeight) * (devicePixelRatio || 1))));
+      sendJson({ type: 'viewport', w: s[0], h: s[1] });
     } catch (_) {}
   };
 
@@ -952,13 +989,27 @@ function connect(pwd) {
     onBinary(e.data);
   };
 
-  ws.onclose = () => {
+  ws.onclose = ev => {
     window.__lastEvt = 'ws-close';
+    var wasConnected = connected;
     connected = false;
     releaseAllKeys();
     resetDecoder();
     stopMse();
     setHud();
+    // 诊断：把关闭码/是否拿到过画面报给服务端（手机上开不了控制台，只能靠这条）
+    beacon('ws-close code=' + (ev && ev.code) + ' clean=' + (ev && ev.wasClean) +
+           ' authed=' + wasConnected + ' decoded=' + decodedOnce + ' jpeg=' + jpegMode);
+    // H.264 一次画面都没出就断开：很可能是这台设备解不了 / 渲染进程崩了。
+    // 连续两次就把"用兼容通道"记住，否则页面重载后又会重试 H.264 → 再崩 → 无限闪屏。
+    if (!decodedOnce && !jpegMode) {
+      h264Fails++;
+      if (h264Fails >= 2) {
+        forceJpeg = true;
+        try { localStorage.setItem('vds.jpeg', String(Date.now())); } catch (_) {}
+        beacon('h264 连续 ' + h264Fails + ' 次无画面，本设备改用兼容通道');
+      }
+    }
     if (login.classList.contains('hide')) {
       // 已连接过 → 自动重连
       setTimeout(() => connect(localStorage.getItem('vds.pwd') || pwd), 1500);
