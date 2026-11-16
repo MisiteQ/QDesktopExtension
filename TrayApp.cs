@@ -22,7 +22,7 @@ public sealed class TrayApp : ApplicationContext
         _tray = new NotifyIcon
         {
             Icon = LoadIcon(),
-            Text = "QDesktopExtension 远程桌面",
+            Text = "QDesktopExtension 桌面扩展平台",
             Visible = true
         };
 
@@ -38,6 +38,7 @@ public sealed class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_miToggle);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("关于 QDesktopExtension", null, (_, _) => ShowAbout()));
         menu.Items.Add(new ToolStripMenuItem("退出", null, (_, _) => ExitApp()));
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => ShowForm();
@@ -58,7 +59,7 @@ public sealed class TrayApp : ApplicationContext
     private void SyncTray()
     {
         _miToggle.Text = _host.Running ? "停止服务" : "启动服务";
-        var tip = _host.Running ? "远程桌面服务正在运行" : "远程桌面服务已停止";
+        var tip = _host.Running ? "桌面扩展服务正在运行" : "桌面扩展服务已停止";
         _tray.Text = _host.Running ? "QDesktopExtension · 服务运行中" : "QDesktopExtension · 服务已停止";
         if (!_balloonShown)
         {
@@ -78,6 +79,12 @@ public sealed class TrayApp : ApplicationContext
         _form.Show();
         _form.WindowState = FormWindowState.Normal;
         _form.Activate();
+    }
+
+    private void ShowAbout()
+    {
+        ShowForm();
+        _form.ShowAbout();
     }
 
     private void OpenWeb()

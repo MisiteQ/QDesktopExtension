@@ -194,7 +194,8 @@ public sealed class AppHost
         catch (Exception ex)
         {
             _lastError = ex.Message;
-            logger?.Error($"服务异常退出: {ex.Message}");
+            // 带上完整堆栈：只有 Message 时，“Specified method is not supported”这类异常没法定位来源
+            logger?.Error($"服务异常退出: {ex}");
         }
         finally
         {

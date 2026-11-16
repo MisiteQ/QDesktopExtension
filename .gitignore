@@ -38,3 +38,6 @@ Desktop.ini
 # 本地临时测试脚本
 _*.js
 _*.json
+
+# 验证截图（本地产物）
+.screenshots/

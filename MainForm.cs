@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace QDesktopExtension;
@@ -10,13 +12,17 @@ namespace QDesktopExtension;
 ///  - 一眼看到"服务在不在跑"和"手机该访问哪个地址"；
 ///  - 只暴露用户真正需要改的东西（复制 / 扩展、画质、端口密码、关闭行为），
 ///    引擎参数（UDP、x264 预设、单客户端带宽、线程数……）不再放到界面上；
-///  - 深色琥珀控制台：常驻运行状态与访问地址，四个设置分区，固定保存操作栏。
+///  - 浅色卡片布局：常驻运行状态与访问地址，四个设置分区 + 关于页，固定保存操作栏。
 /// </summary>
 public sealed class MainForm : Form
 {
     public const string CloseAsk = "ask";
     public const string CloseTray = "tray";
     public const string CloseExit = "exit";
+
+    private const string AboutTabText = "关于";
+    private const string AuthorName = "Misite齊";
+    private const string AuthorUrl = "https://github.com/MisiteQ";
 
     private readonly AppHost _host;
     private readonly UiSettings _ui;
@@ -214,7 +220,7 @@ public sealed class MainForm : Form
         }, 0, 0);
         identity.Controls.Add(new Label
         {
-            Text = "远程桌面控制台  /  REMOTE DESKTOP",
+            Text = "桌面扩展平台  /  DESKTOP EXTENSION",
             AutoSize = true,
             ForeColor = UiTheme.Muted,
             Font = UiTheme.Body(8.5f)
@@ -313,14 +319,29 @@ public sealed class MainForm : Form
         return card;
     }
 
+    private UiTabControl? _tabs;
+
     private Control BuildTabs()
     {
-        var tabs = new UiTabControl { Dock = DockStyle.Fill, Font = UiTheme.Body(9.5f) };
-        tabs.TabPages.Add(BuildDisplayTab());
-        tabs.TabPages.Add(BuildLinkTab());
-        tabs.TabPages.Add(BuildQualityTab());
-        tabs.TabPages.Add(BuildOtherTab());
-        return tabs;
+        _tabs = new UiTabControl { Dock = DockStyle.Fill, Font = UiTheme.Body(9.5f) };
+        _tabs.TabPages.Add(BuildDisplayTab());
+        _tabs.TabPages.Add(BuildLinkTab());
+        _tabs.TabPages.Add(BuildQualityTab());
+        _tabs.TabPages.Add(BuildOtherTab());
+        _tabs.TabPages.Add(BuildAboutTab());
+        return _tabs;
+    }
+
+    /// <summary>托盘菜单“关于”入口：把面板叫到前面并切到关于页。</summary>
+    public void ShowAbout()
+    {
+        if (_tabs == null) return;
+        foreach (TabPage page in _tabs.TabPages)
+        {
+            if (page.Text != AboutTabText) continue;
+            _tabs.SelectedTab = page;
+            break;
+        }
     }
 
     private TabPage BuildDisplayTab()
@@ -516,6 +537,169 @@ public sealed class MainForm : Form
         AddRow(diagnostics, "日志详细程度", _cmbLogLevel, 40);
         AddWideRow(diagnostics, Hint("排查问题时可选“详细”；日志目录可通过顶部“日志”按钮打开。"), 38);
         return page;
+    }
+
+    // ---------- 关于 ----------
+    private TabPage BuildAboutTab()
+    {
+        var page = NewPage(AboutTabText);
+        var layout = PageGrid(page);
+
+        // 品牌头：沿用卡片语言，左侧应用标记，右侧名称 / 版本 / 一句话定位
+        var hero = AddBareCard(layout, 140, HPad(20, 16, 20, 16));
+        var heroGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.Surface };
+        heroGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, H(80)));
+        heroGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var mark = new UiCardPanel
+        {
+            Size = new Size(H(64), H(64)),
+            Margin = new Padding(0, H(4), H(16), 0),
+            Padding = Padding.Empty,
+            AccentBorder = true
+        };
+        mark.Controls.Add(new Label
+        {
+            Text = "QD",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = UiTheme.Accent,
+            Font = UiTheme.Display(15f, FontStyle.Bold)
+        });
+
+        var identity = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Surface };
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(34)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(24)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        identity.Controls.Add(new Label
+        {
+            Text = "QDesktopExtension",
+            AutoSize = true,
+            ForeColor = UiTheme.Text,
+            Font = UiTheme.Display(16f, FontStyle.Bold)
+        }, 0, 0);
+        identity.Controls.Add(new Label
+        {
+            Text = $"版本 {AppVersion()}　·　桌面扩展平台",
+            AutoSize = true,
+            ForeColor = UiTheme.Muted,
+            Font = UiTheme.Body(9f)
+        }, 0, 1);
+        identity.Controls.Add(new Label
+        {
+            Text = "把电脑画面实时投到手机、平板或另一台电脑的浏览器，并可用触摸或鼠标键盘反向操作。",
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            ForeColor = UiTheme.Muted,
+            Font = UiTheme.Body(9f)
+        }, 0, 2);
+
+        heroGrid.Controls.Add(mark, 0, 0);
+        heroGrid.Controls.Add(identity, 1, 0);
+        hero.Controls.Add(heroGrid);
+
+        var author = AddCard(layout, 174, "作者与项目");
+        AddRow(author, "作者", ValueLabel(AuthorName), 36);
+        AddRow(author, "GitHub", ValueLink(AuthorUrl), 36);
+        AddWideRow(author, Hint("个人项目，欢迎在 GitHub 上交流或反馈问题。"), 38);
+
+        var runtime = AddCard(layout, 248, "运行环境");
+        AddRow(runtime, "程序版本", ValueLabel("v" + AppVersion()), 36);
+        AddRow(runtime, "运行时", ValueLabel($".NET {Environment.Version}"), 36);
+        AddRow(runtime, "操作系统", ValueLabel(RuntimeInformation.OSDescription), 36);
+        AddRow(runtime, "程序目录", ValueLabel(AppContext.BaseDirectory), 36);
+        var copy = new UiButton { Text = "复制版本信息", Role = UiButtonRole.Outline, AutoSize = false, Size = new Size(132, 32) };
+        copy.Margin = new Padding(0, 4, 0, 4);
+        copy.Click += (_, _) => CopyVersionInfo();
+        AddRow(runtime, "", copy, 40);
+
+        var credits = AddCard(layout, 202, "组件与致谢");
+        AddRow(credits, "Fleck", ValueLabel("WebSocket 服务端"), 32);
+        AddRow(credits, "FFmpeg", ValueLabel("H.264 编码与 MP4 封装"), 32);
+        AddRow(credits, "Parsec VDD", ValueLabel("虚拟扩展屏驱动"), 32);
+        AddWideRow(credits, Hint($"© {DateTime.Now.Year} {AuthorName}　本程序按现状提供；远程访问存在安全风险，开放到公网前请先设置强密码。"), 44);
+        return page;
+    }
+
+    /// <summary>只有内容、没有标题栏的卡片（关于页品牌头用）。</summary>
+    private UiCardPanel AddBareCard(TableLayoutPanel page, int height, Padding padding)
+    {
+        var row = page.RowCount++;
+        page.RowStyles.Add(new RowStyle(SizeType.Absolute, H(height)));
+        var card = new UiCardPanel
+        {
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, H(12)),
+            Padding = padding
+        };
+        page.Controls.Add(card, 0, row);
+        return card;
+    }
+
+    private static Label ValueLabel(string text) => new()
+    {
+        Text = text,
+        AutoSize = false,
+        Dock = DockStyle.Fill,
+        TextAlign = ContentAlignment.MiddleLeft,
+        ForeColor = UiTheme.Text,
+        AutoEllipsis = true,
+        Margin = Padding.Empty
+    };
+
+    private LinkLabel ValueLink(string url, string? text = null)
+    {
+        var link = new LinkLabel
+        {
+            Text = text ?? url,
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            LinkColor = UiTheme.Accent,
+            ActiveLinkColor = UiTheme.AccentPressed,
+            VisitedLinkColor = UiTheme.Accent,
+            LinkBehavior = LinkBehavior.HoverUnderline,
+            Font = UiTheme.Body(9.5f),
+            Cursor = Cursors.Hand,
+            Margin = Padding.Empty
+        };
+        link.LinkClicked += (_, _) => OpenUrl(url);
+        return link;
+    }
+
+    private static void OpenUrl(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
+
+    /// <summary>版本号唯一来源：csproj 的 &lt;Version&gt;（经 AssemblyInformationalVersion 带出来）。</summary>
+    private static string AppVersion()
+    {
+        var asm = typeof(MainForm).Assembly;
+        var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(info))
+        {
+            var plus = info.IndexOf('+');    // SDK 会追加 +commit 后缀，界面里不显示
+            return plus > 0 ? info[..plus] : info;
+        }
+        var v = asm.GetName().Version;
+        return v == null ? "1.0.0" : $"{v.Major}.{v.Minor}.{v.Build}";
+    }
+
+    private void CopyVersionInfo()
+    {
+        var text = $"QDesktopExtension {AppVersion()}{Environment.NewLine}"
+                 + $".NET {Environment.Version}{Environment.NewLine}"
+                 + RuntimeInformation.OSDescription;
+        try
+        {
+            Clipboard.SetText(text);
+            SetMsg("版本信息已复制到剪贴板");
+        }
+        catch
+        {
+            SetMsg("复制失败，请手动记录版本信息");
+        }
     }
 
     private Control BuildFooter()

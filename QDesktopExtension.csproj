@@ -14,6 +14,16 @@
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- 程序集元信息：面板“关于”页与 exe 属性页共用同一份来源 -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>QDesktopExtension</Product>
+    <AssemblyTitle>QDesktopExtension 桌面扩展平台</AssemblyTitle>
+    <Company>Misite齊</Company>
+    <Authors>Misite齊</Authors>
+    <Copyright>© 2026 Misite齊</Copyright>
+    <Description>桌面扩展 / 屏幕串流服务：浏览器实时查看电脑画面并反向操作。</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Fleck" Version="1.0.2" />
