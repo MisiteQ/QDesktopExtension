@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>QDesktopExtension · 远程桌面</title>
+<style>
+  /* 设计基调：监视器 / 导播台。近黑底 + 细描边玻璃层 + 单一琥珀色"信号色" + 等宽数字仪表。
+     不引入任何外部字体或图片资源：局域网离线、手机老 WebView 都要能正常显示。 */
+  :root {
+    --bg: #07080a;
+    --panel: rgba(13, 14, 18, .78);
+    --line: rgba(255, 255, 255, .085);
+    --line-2: rgba(255, 255, 255, .16);
+    --text: #eceef3;
+    --muted: #8b909c;
+    --dim: #5a5f6a;
+    --accent: #ffb454;
+    --accent-ink: #1a1206;
+    --ok: #6ee7a8;
+    --bad: #ff8080;
+    --mono: "Cascadia Mono", Consolas, ui-monospace, "SFMono-Regular", monospace;
+    --sans: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI",
+      "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
+  }
+  * { -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+    font-family: var(--sans); color: var(--text);
+    -webkit-user-select: none; user-select: none; -webkit-font-smoothing: antialiased; }
+  /* 画面四周留白处也有质感：极淡网格 + 顶部冷光，避免大片死黑 */
+  body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 80% at 50% 0%, rgba(96, 116, 168, .10), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, .022) 0 1px, transparent 1px 44px),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, .022) 0 1px, transparent 1px 44px); }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    transform-origin: 50% 50%; transition: transform .15s ease-out; overflow: hidden; }
+  /* 画面 + 按钮 + 提示条放进同一个可旋转容器：翻方向时整体一起转，控件不会"浮"在转过的画面上 */
+  #rot { position: fixed; inset: 0; transform-origin: 50% 50%; }
+  #rot.rot180 { transform: rotate(180deg); }
+  /* 个别手机在全屏时会把画面转 180°，这里按方向角变化反向补偿回来 */
+  #stage.flip180 { transform: rotate(180deg); }
+  /* 沉浸模式（“全屏”按钮）：画面铺满、状态仪表自动淡出 */
+  body.immersive #hud { opacity: 0; }
+  #cv { display: block; max-width: 100vw; max-height: 100vh; width: auto; height: auto;
+    touch-action: none; background: #000; cursor: default;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 26px 70px -24px rgba(0, 0, 0, .95); }
+  #vid { display: none; max-width: 100vw; max-height: 100vh; width: auto; height: auto;
+    background: #000; object-fit: contain; }
+  #vid.show { display: block; }
+  #cv.hide { display: none; }
+
+  /* ---- 状态仪表（左上） ---- */
+  #hud { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 10px; z-index: 20;
+    max-width: min(84vw, 430px); padding: 9px 12px 11px; border-radius: 13px;
+    background: var(--panel); border: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+    box-shadow: 0 14px 34px -16px rgba(0, 0, 0, .9), inset 0 1px 0 rgba(255, 255, 255, .05);
+    pointer-events: none; transition: opacity .22s; }
+  #hud.hide { opacity: 0; }
+  #hud .hd { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+  #hud .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); flex: none; }
+  #hud.live .dot { background: var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+  #hud .st { font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
+  #hud .tag { margin-left: auto; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); border: 1px solid var(--line-2);
+    border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+  #hud .grid { display: grid; grid-template-columns: repeat(3, minmax(0, auto)); gap: 8px 18px; }
+  #hud .cell b { display: block; font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    letter-spacing: -.01em; color: var(--text); white-space: nowrap; }
+  #hud .cell span { display: block; margin-top: 2px; font-size: 9.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--dim); }
+  #hud .warn { grid-column: 1 / -1; font-size: 11.5px; line-height: 1.5; color: var(--accent); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* ---- 右下角控制按钮 + 弹出菜单 ----
+     控制项不再常驻屏幕中间：平时只留一个小圆钮，点它才弹出各项按钮，
+     再点一次或点空白处收起，避免误触和遮挡画面 */
+  #fab { position: fixed; right: calc(14px + env(safe-area-inset-right));
+    bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 26;
+    width: 46px; height: 46px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+    cursor: pointer; border: 1px solid var(--line); background: rgba(10, 11, 14, .74);
+    color: var(--muted);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+    box-shadow: 0 18px 44px -18px rgba(0, 0, 0, .95), inset 0 1px 0 rgba(255, 255, 255, .05);
+    opacity: 0; transform: scale(.88); pointer-events: none;
+    transition: opacity .3s, transform .3s, background .16s, color .16s; }
+  body.ready #fab { opacity: 1; transform: none; pointer-events: auto; }
+  #fab:active { transform: scale(.93); }
+  #fab svg { width: 20px; height: 20px; display: block; }
+  body.menu-open #fab { color: var(--accent); background: rgba(22, 25, 32, .92); }
+
+  #toggles { position: fixed; right: calc(14px + env(safe-area-inset-right));
+    bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 25;
+    display: flex; flex-direction: column; gap: 2px; padding: 6px; min-width: 106px;
+    border-radius: 16px; background: rgba(10, 11, 14, .82); border: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+    box-shadow: 0 24px 54px -22px rgba(0, 0, 0, .95), inset 0 1px 0 rgba(255, 255, 255, .05);
+    transform-origin: 100% 100%; transform: translateY(6px) scale(.96);
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s; }
+  body.menu-open #toggles { opacity: 1; transform: none; pointer-events: auto; }
+  #toggles button { appearance: none; -webkit-appearance: none; border: 0; cursor: pointer;
+    min-height: 38px; padding: 10px 14px; border-radius: 11px; background: transparent;
+    color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 600;
+    letter-spacing: .03em; text-align: left; white-space: nowrap;
+    transition: background .16s, color .16s, transform .12s; }
+  #toggles button:hover { background: rgba(255, 255, 255, .08); color: var(--text); }
+  #toggles button:active { transform: scale(.97); }
+  #toggles button.primary { background: var(--accent); color: var(--accent-ink);
+    box-shadow: 0 2px 12px -2px rgba(255, 180, 84, .45); }
+  #toggles button.primary:hover { background: #ffc56f; color: var(--accent-ink); }
+  /* "方向"按钮只在画面铺满（全屏）时出现：浏览器把画面转 180° 时点一下即可翻回 */
+  #btnRotate { display: none; }
+  body.immersive #btnRotate { display: block; }
+
+  /* ---- 连接页 ---- */
+  #login { position: fixed; inset: 0; z-index: 30; display: flex;
+    align-items: center; justify-content: center; padding: 20px; background:
+      radial-gradient(76% 54% at 50% 0%, rgba(255, 180, 84, .07), transparent 62%),
+      radial-gradient(90% 70% at 50% 100%, rgba(72, 92, 142, .16), transparent 62%),
+      rgba(5, 6, 8, .95); }
+  #login.hide { display: none; }
+  #login .box { position: relative; width: min(100%, 348px); padding: 26px 24px 18px;
+    border-radius: 20px; border: 1px solid var(--line);
+    background: linear-gradient(168deg, #14161c 0%, #0b0c10 100%);
+    box-shadow: 0 44px 96px -34px rgba(0, 0, 0, .95), inset 0 1px 0 rgba(255, 255, 255, .07);
+    animation: rise .58s cubic-bezier(.2, .85, .25, 1) both; }
+  #login .box::before { content: ""; position: absolute; top: 0; left: 26px; right: 26px; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 180, 84, .8), transparent); }
+  #login .box > * { animation: fadeUp .5s cubic-bezier(.2, .8, .2, 1) both; }
+  #login .box > :nth-child(1) { animation-delay: .06s; }
+  #login .box > :nth-child(2) { animation-delay: .12s; }
+  #login .box > :nth-child(3) { animation-delay: .16s; }
+  #login .box > :nth-child(4) { animation-delay: .22s; }
+  #login .box > :nth-child(5) { animation-delay: .28s; }
+  #login .box > :nth-child(6) { animation-delay: .32s; }
+  #login .box > :nth-child(7) { animation-delay: .36s; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+  .brand .mark { width: 34px; height: 34px; flex: none; border-radius: 10px;
+    display: grid; place-items: center; font-family: var(--mono); font-size: 12px;
+    font-weight: 700; letter-spacing: .04em; color: var(--accent);
+    background: linear-gradient(160deg, #1d2028, #101217); border: 1px solid var(--line-2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09); }
+  .brand b { display: block; font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+  .brand span { display: block; margin-top: 2px; font-size: 9.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--dim); }
+  #login h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 6px; }
+  #login p { font-size: 12.5px; line-height: 1.6; color: var(--muted); margin: 0 0 20px; }
+  .field { position: relative; display: block; }
+  #pwd { width: 100%; box-sizing: border-box; height: 50px; padding: 20px 13px 6px;
+    border-radius: 12px; font-size: 14.5px; font-family: var(--mono); letter-spacing: .06em;
+    background: #08090c; color: var(--text); border: 1px solid var(--line-2); outline: none;
+    transition: border-color .16s, box-shadow .16s; }
+  #pwd:focus { border-color: rgba(255, 180, 84, .62); box-shadow: 0 0 0 4px rgba(255, 180, 84, .10); }
+  .field .ph { position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    font-size: 13px; color: var(--dim); pointer-events: none;
+    transition: top .16s, font-size .16s, color .16s, letter-spacing .16s; }
+  #pwd:focus + .ph, #pwd:not(:placeholder-shown) + .ph { top: 9px; transform: none;
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  #go { width: 100%; height: 46px; margin-top: 16px; border: 0; border-radius: 12px;
+    cursor: pointer; background: var(--accent); color: var(--accent-ink);
+    font-family: inherit; font-size: 14px; font-weight: 700; letter-spacing: .08em;
+    box-shadow: 0 10px 26px -12px rgba(255, 180, 84, .6);
+    transition: filter .16s, transform .12s; }
+  #go:hover { filter: brightness(1.06); }
+  #go:active { transform: translateY(1px) scale(.996); }
+  #err { margin-top: 10px; min-height: 15px; font-size: 12px; line-height: 1.5; color: var(--bad); }
+  .foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+    font-size: 10.5px; letter-spacing: .04em; color: var(--dim); text-align: center; }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px) scale(.985); } to { opacity: 1; transform: none; } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* ---- 提示条：放在控制条上方，不压住状态仪表 ---- */
+  #notice { position: fixed; left: 50%; bottom: calc(70px + env(safe-area-inset-bottom));
+    transform: translateX(-50%); z-index: 26; max-width: min(92vw, 540px);
+    padding: 10px 13px; border-radius: 12px; cursor: pointer;
+    background: rgba(46, 32, 12, .95); border: 1px solid rgba(255, 180, 84, .32);
+    color: #ffd9a8; font-size: 12px; line-height: 1.6;
+    box-shadow: 0 18px 44px -20px rgba(0, 0, 0, .95);
+    animation: drop .28s cubic-bezier(.2, .85, .25, 1) both; }
+  #notice.hide { display: none; }
+  @keyframes drop { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* ---- 锁屏 / 无法采集 ---- */
+  #lock { position: fixed; inset: 0; z-index: 24; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 13px; padding: 24px; text-align: center;
+    background: radial-gradient(64% 46% at 50% 44%, rgba(255, 180, 84, .055), transparent 70%), #06070a; }
+  #lock.hide { display: none; }
+  #lock .ring { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center;
+    border: 1px solid rgba(255, 180, 84, .28); animation: breathe 2.8s ease-in-out infinite; }
+  #lock .ring::after { content: ""; width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(255, 180, 84, .1); border: 1px solid rgba(255, 180, 84, .5); }
+  @keyframes breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 180, 84, .14); }
+    50% { box-shadow: 0 0 0 16px rgba(255, 180, 84, 0); } }
+  #lock .big { font-size: 17px; font-weight: 600; letter-spacing: .01em; color: #e6e8ee; }
+  #lock .sub { max-width: 320px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001s !important; animation-iteration-count: 1 !important;
+      transition-duration: .001s !important; }
+  }
+</style>
+</head>
+<body>
+<div id="rot">
+<div id="stage">
+  <canvas id="cv" width="1280" height="720"></canvas>
+  <video id="vid" playsinline muted autoplay></video>
+</div>
+
+<div id="hud" class="hide"></div>
+<div id="notice" class="hide"></div>
+<div id="lock" class="hide">
+  <div class="ring"></div>
+  <div class="big">电脑已锁屏 / 屏幕已关闭</div>
+  <div class="sub">解锁或点亮屏幕后画面会自动恢复，不用重新连接</div>
+</div>
+<div id="toggles">
+  <button id="btnHud" title="显示/隐藏状态">状态</button>
+  <button id="btnFill" title="铺满 / 完整">完整</button>
+  <button id="btnRotate" title="画面上下颠倒时点一下">方向</button>
+  <button id="btnFull" class="primary" title="全屏">全屏</button>
+</div>
+<button id="fab" title="控制" aria-label="控制">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+    <path d="M4 7h9M4 12h13M4 17h9"/>
+    <circle cx="16.5" cy="7" r="1.9"/><circle cx="20" cy="17" r="1.9"/>
+  </svg>
+</button>
+</div>
+
+<div id="login">
+  <div class="box">
+    <div class="brand">
+      <div class="mark">QD</div>
+      <div>
+        <b>QDesktopExtension</b>
+        <span>Remote Desktop</span>
+      </div>
+    </div>
+    <h1>连接到这台电脑</h1>
+    <p>输入电脑端 appconfig.json 中设置的访问密码</p>
+    <label class="field">
+      <input id="pwd" type="password" inputmode="text" autocomplete="current-password" placeholder=" ">
+      <span class="ph">访问密码</span>
+    </label>
+    <button id="go">连接</button>
+    <div id="err"></div>
+    <div class="foot">连上后可直接用鼠标、键盘操作这台电脑</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const WS_PORT = __WS_PORT__;
+const ALLOW_INPUT = __ALLOW_INPUT__;
+
+const stage = document.getElementById('stage');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+const vid = document.getElementById('vid');
+const notice = document.getElementById('notice');
+const login = document.getElementById('login');
+const pwdInput = document.getElementById('pwd');
+const errBox = document.getElementById('err');
+
+let ws = null;
+let connected = false;
+let authTimer = null;
+let lastAuthPayload = null;
+let lastAuthRetryAt = 0;
+let pingTimer = null;
+
+// ---- 视频状态 ----
+let codecStr = 'avc1.42001E';
+let descBytes = null;
+let videoW = 1280, videoH = 720, serverFps = 30, serverKbps = 0, clients = 0;
+let vdec = null;
+let jpegMode = false;             // 浏览器不支持 WebCodecs 时走服务端 JPEG 静态帧
+let mseMode = false;              // 支持 MediaSource 但没 WebCodecs 时走 fMP4（手机常见）
+let forceJpeg = typeof VideoDecoder === 'undefined' && !hasMse();
+let decodedOnce = false;
+let frameWatch = null;
+let jpegFallbackDone = false;
+let decFrames = 0, decFps = 0, lastDecStat = performance.now();
+let lastFrameAt = 0, latencyMs = 0;
+let captureOk = true;
+
+// ---- 输入状态 ----
+let penDown = false;
+let lastMoveSend = 0;
+let pendingMove = null;
+let moveTimer = null;
+const pressedKeys = new Set();
+
+// ---- 采集源（复制屏幕 / 扩展屏） ----
+let monSel = null;              // 客户端不再提供采集源选择（显示模式在电脑面板设置）
+let monitors = [];
+let currentMonitor = 0;
+let currentSource = null;      // {kind:'monitor'|'virtual', index?}
+let windowList = [];
+let virtualCount = 0;          // 电脑上「扩展屏」已配置的程序数，0 表示还没配
+
+function sourceKey(src) {
+  if (!src) return '';
+  if (src.kind === 'virtual') return 'v';
+  return 'm' + src.index;
+}
+
+
+function setMonitors(list, current) {
+  monitors = list || [];
+  currentMonitor = current ?? 0;
+  if (!currentSource) currentSource = { kind: 'monitor', index: currentMonitor };
+  renderSources();
+}
+
+function setWindows(list, current) {
+  windowList = (list && list.windows) ? list.windows : (list || []);
+  if (current) currentSource = current;
+  renderSources();
+  renderVirtualPicker();
+}
+
+// 浏览器这边只是一块显示器：显示「复制」还是「扩展」由电脑上的设置面板决定，
+// 这里不提供任何采集源/程序选择，连上就出画。
+const winSel = null;
+
+function renderVirtualPicker() { /* 客户端不再选择显示内容 */ }
+
+function renderSources() { /* 客户端不再选择采集源 */ }
+
+// ---- 键盘 ----
+// 可打印字符走 Unicode 文本（不依赖目标机键盘布局），其余走虚拟键码
+const VK_MAP = {
+  Escape: 27, Enter: 13, NumpadEnter: 13, Tab: 9, Backspace: 8, Space: 32,
+  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+  Insert: 45, Delete: 46, Home: 36, End: 35, PageUp: 33, PageDown: 34,
+  CapsLock: 20, ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
+  AltLeft: 18, AltRight: 18, MetaLeft: 91, MetaRight: 92,
+  PrintScreen: 44, Pause: 19, ScrollLock: 145, NumLock: 144,
+  Minus: 189, Equal: 187, BracketLeft: 219, BracketRight: 221, Backslash: 220,
+  Semicolon: 186, Quote: 222, Comma: 188, Period: 190, Slash: 191, Backquote: 192,
+  NumpadMultiply: 106, NumpadAdd: 107, NumpadSubtract: 109, NumpadDecimal: 110, NumpadDivide: 111
+};
+for (let i = 1; i <= 12; i++) VK_MAP['F' + i] = 111 + i;
+for (let i = 0; i <= 9; i++) VK_MAP['Numpad' + i] = 96 + i;
+
+function vkOf(e) {
+  if (VK_MAP[e.code]) return VK_MAP[e.code];
+  if (e.code.length === 4 && e.code.startsWith('Key')) return e.code.charCodeAt(3);      // KeyA → 65
+  if (e.code.length === 6 && e.code.startsWith('Digit')) return 48 + Number(e.code[5]);   // Digit0 → 48
+  return 0;
+}
+
+function isPrintable(e) {
+  return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+}
+
+function releaseAllKeys() {
+  if (!pressedKeys.size) return;
+  for (const vk of pressedKeys) sendJson({ type: 'input', ev: 'key_up', vk });
+  pressedKeys.clear();
+}
+
+function keyTargetOk(e) {
+  return connected && ALLOW_INPUT && login.classList.contains('hide') && e.target !== pwdInput;
+}
+
+window.addEventListener('keydown', e => {
+  if (!keyTargetOk(e)) return;
+  if (isPrintable(e)) {
+    sendJson({ type: 'input', ev: 'text', text: e.key });
+    e.preventDefault();
+    return;
+  }
+  const vk = vkOf(e);
+  if (!vk) return;
+  if (!pressedKeys.has(vk)) {
+    pressedKeys.add(vk);
+    sendJson({ type: 'input', ev: 'key_down', vk });
+  }
+  e.preventDefault();
+});
+
+window.addEventListener('keyup', e => {
+  if (!keyTargetOk(e)) return;
+  if (isPrintable(e)) return;          // 文本已经在 keydown 一次性送出
+  const vk = vkOf(e);
+  if (!vk) return;
+  if (pressedKeys.delete(vk)) sendJson({ type: 'input', ev: 'key_up', vk });
+  e.preventDefault();
+});
+
+window.addEventListener('blur', releaseAllKeys);
+
+// ============ HUD ============
+// 结构化的仪表：状态灯 + 六项数值（等宽字体），比原来的一坨纯文本好扫读
+function hudCell(value, label) {
+  return '<div class="cell"><b>' + value + '</b><span>' + label + '</span></div>';
+}
+function setHud() {
+  const monText = currentSource && currentSource.kind === 'window'
+    ? '窗口'
+    : (monitors.length > 1 ? (currentMonitor === -1 ? '全部屏幕' : '屏幕 ' + (currentMonitor + 1)) : '');
+  const mode = jpegMode ? 'JPEG' : (mseMode ? 'MSE' : 'H.264');
+  const warn = captureOk ? '' : '<div class="warn">远端屏幕当前无法采集（锁屏 / 独占全屏）</div>';
+  hud.classList.toggle('live', connected);
+  hud.innerHTML =
+    '<div class="hd"><i class="dot"></i><span class="st">' + (connected ? '已连接' : '未连接') + '</span>' +
+    '<span class="tag">' + mode + '</span>' +
+    (monText ? '<span class="tag">' + monText + '</span>' : '') + '</div>' +
+    '<div class="grid">' +
+      hudCell(videoW + '×' + videoH, '分辨率') +
+      hudCell(serverFps + ' fps', '远端帧率') +
+      hudCell(serverKbps + ' kbps', '码率') +
+      hudCell(decFps + ' fps', '本地解码') +
+      hudCell('~' + latencyMs + ' ms', '延迟') +
+      hudCell(clients + ' 台', '客户端') +
+    '</div>' + warn;
+  updateScreenState();
+}
+function showHud(show) { hud.classList.toggle('hide', !show); }
+
+// 锁屏 / 屏幕关闭 / 独占全屏时抓不到画面：盖一层明确提示，别让用户对着"最后一帧或者黑屏"猜
+let lockFlag = false;
+function updateScreenState() {
+  const el = document.getElementById('lock');
+  const stalled = connected && (lockFlag || !captureOk || (lastFrameAt > 0 && performance.now() - lastFrameAt > 3000));
+  el.classList.toggle('hide', !stalled);
+}
+
+document.getElementById('btnHud').onclick = () => hud.classList.toggle('hide');
+
+// ============ 全屏 ============
+// 只依赖浏览器原生全屏在部分手机（如 MIUI 自带浏览器）上会"转 180° 又没全屏"，
+// 所以这里以"铺满视口"为准：进入沉浸模式（隐藏其它控件、画面铺满），
+// 原生全屏能成功就顺带用上；旋转 180° 时做一次反向补偿。
+let immersive = false;
+let rotDeg = 0;                 // 画面方向补偿：0 / 180，用户点一下就能翻回来
+let fillMode = false;           // true=铺满（裁掉超出部分）false=完整（等比留边）
+const rot = document.getElementById('rot');
+
+// ============ 右下角控制菜单 ============
+// 平时只留一个圆形按钮，点它才弹出各项控制；点按钮项或空白处即收起。
+// 不再"点画面就弹出控制条"——那样正常操作画面时会误触，反而挡视野。
+const fabBtn = document.getElementById('fab');
+function setMenu(open) { document.body.classList.toggle('menu-open', open); }
+function closeMenu() { setMenu(false); }
+function toggleMenu() { setMenu(!document.body.classList.contains('menu-open')); }
+fabBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(); });
+document.getElementById('toggles').addEventListener('click', () => closeMenu());
+document.addEventListener('pointerdown', e => {
+  if (!document.body.classList.contains('menu-open')) return;
+  if (e.target.closest('#toggles') || e.target.closest('#fab')) return;
+  closeMenu();
+});
+
+// 不管在不在全屏，都按屏幕可视区域把画面等比放大到最大，避免"只占中间一小块"
+function fitStage() {
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const showVideo = vid.classList.contains('show');
+  const srcW = showVideo ? (vid.videoWidth || videoW || 16) : (videoW || 16);
+  const srcH = showVideo ? (vid.videoHeight || videoH || 9) : (videoH || 9);
+  const ar = (srcW > 0 && srcH > 0) ? srcW / srcH : 16 / 9;
+
+  let w, h;
+  if (fillMode) {
+    // 铺满 = 按这块屏自己的分辨率输出并原样铺开：
+    // 服务端会把编码分辨率改成这里上报的尺寸，所以画面完整、不裁切也不留黑边
+    w = vw; h = vh;
+  } else {
+    // 完整：等比缩放到能看全，四周留黑边
+    w = vw; h = Math.round(vw / ar);
+    if (h > vh) { h = vh; w = Math.round(vh * ar); }
+  }
+  const targets = [cv, vid];
+  for (const el of targets) {
+    el.style.width = Math.max(1, w) + 'px';
+    el.style.height = Math.max(1, h) + 'px';
+    el.style.maxWidth = 'none';
+    el.style.maxHeight = 'none';
+  }
+  // 旋转作用在整个容器上：画面、按钮、提示条一起转，控件不会留在原来的角落
+  rot.style.transform = rotDeg ? `rotate(${rotDeg}deg)` : '';
+  sendViewport();
+}
+
+// 把这块屏的分辨率告诉服务端：对面这块屏多大，这块"显示器"就多大
+let viewportTimer = null;
+function sendViewport() {
+  if (viewportTimer) { clearTimeout(viewportTimer); viewportTimer = null; }
+  viewportTimer = setTimeout(() => {
+    viewportTimer = null;
+    if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round((window.innerWidth || 0) * dpr);
+    const h = Math.round((window.innerHeight || 0) * dpr);
+    if (w >= 320 && h >= 240) sendJson({ type: 'viewport', w: w, h: h, fill: fillMode });
+    else if (!fillMode) sendJson({ type: 'viewport', w: 0, h: 0, fill: false });
+  }, 400);
+}
+window.addEventListener('resize', fitStage);
+window.addEventListener('orientationchange', () => setTimeout(fitStage, 250));
+
+function enterImmersive() {
+  immersive = true;
+  document.body.classList.add('immersive');
+  stage.classList.remove('flip180');
+  // 必须对整个文档请求全屏：只对 #stage 请求的话，浏览器在全屏态只渲染该元素，
+  // 外面的控制条/提示条会被一起排除掉（手机上看不到任何按钮）。
+  try { document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => { }); } catch (_) { }
+  fitStage();
+  setTimeout(fitStage, 200);
+  setTimeout(fitStage, 600);
+  closeMenu();
+  // 有的浏览器进全屏时会把画面转 180°：给出可见的补救入口
+  showNotice('画面上下颠倒点「方向」翻回；想撑满整屏点「铺满」（会裁掉少量边缘）', 6000);
+}
+
+function exitImmersive() {
+  immersive = false;
+  document.body.classList.remove('immersive');
+  rotDeg = 0;
+  stage.classList.remove('flip180');
+  rot.style.transform = '';
+  closeMenu();
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) { }
+  fitStage();
+}
+
+document.getElementById('btnFull').onclick = () => {
+  if (immersive) exitImmersive(); else enterImmersive();
+  document.getElementById('btnFull').textContent = immersive ? '退出' : '全屏';
+};
+
+// 画面被浏览器转成 180°（或拿反了手机）时，点一下这个按钮翻回来
+document.getElementById('btnRotate').onclick = () => {
+  rotDeg = rotDeg === 0 ? 180 : 0;
+  fitStage();
+};
+
+// 铺满 / 完整 切换：铺满=裁掉超出部分撑满整屏，完整=等比显示不裁切
+document.getElementById('btnFill').onclick = () => {
+  fillMode = !fillMode;
+  document.getElementById('btnFill').textContent = fillMode ? '铺满' : '完整';
+  try { localStorage.setItem('qde.fill', fillMode ? '1' : '0'); } catch (_) { }
+  fitStage();
+};
+try {
+  if (localStorage.getItem('qde.fill') === '1') {
+    fillMode = true;
+    document.getElementById('btnFill').textContent = '铺满';
+  }
+} catch (_) { }
+
+document.addEventListener('fullscreenchange', () => { setTimeout(fitStage, 150); });
+
+// ============ 解码 ============
+function resetDecoder() {
+  if (vdec) {
+    try { if (vdec.state !== 'closed') vdec.close(); } catch (e) {}
+    vdec = null;
+  }
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+}
+
+function ensureDecoder() {
+  if (jpegMode) return false;
+  if (vdec) return true;
+  if (typeof VideoDecoder === 'undefined') {
+    showNotice('此浏览器在非 HTTPS 页面下没有 WebCodecs，已切换到 JPEG 低帧率模式。' +
+               '想要 30fps 高清画面，请用 localhost 或 HTTPS 打开。');
+    return false;
+  }
+  try {
+    vdec = new VideoDecoder({
+      output: frame => {
+        if (frame.displayWidth && frame.displayHeight &&
+            (cv.width !== frame.displayWidth || cv.height !== frame.displayHeight)) {
+          cv.width = frame.displayWidth;
+          cv.height = frame.displayHeight;
+        }
+        ctx.drawImage(frame, 0, 0, cv.width, cv.height);
+        lastFrameAt = performance.now();
+        decFrames++;
+        decodedOnce = true;
+        if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+        frame.close();
+        if (!connected) autoConnected('h264-frame');
+      },
+      error: e => {
+        console.error('decode', e);
+        resetDecoder();
+        // 解不出来（手机浏览器对 H.264 profile 不兼容等）→ 切兼容模式，别让用户对着黑屏
+        fallbackToJpeg('H.264 解码失败');
+      }
+    });
+    const cfg = { codec: codecStr, optimizeForLatency: true };
+    if (descBytes && descBytes.length) cfg.description = descBytes;
+    vdec.configure(cfg);
+    return true;
+  } catch (e) {
+    console.error('configure', e);
+    resetDecoder();
+    showError('解码器初始化失败: ' + e.message);
+    fallbackToJpeg('解码器初始化失败');
+    return false;
+  }
+}
+
+// ===== MSE（fMP4）播放：手机浏览器没有 WebCodecs 但有 MediaSource =====
+let ms = null, sb = null, initSeg = null, initAppended = false, msReady = false;
+let mseStarted = false;
+let mseQueue = [];
+
+function hasMse() {
+  try {
+    return !!window.MediaSource &&
+      MediaSource.isTypeSupported('video/mp4; codecs="avc1.42C028"');
+  } catch (e) { return false; }
+}
+
+function startMse(codec) {
+  mseMode = true;
+  jpegMode = false;
+  cv.classList.add('hide');
+  vid.classList.add('show');
+  initSeg = null; initAppended = false; msReady = false; mseQueue = [];
+  mseStarted = false;
+  const mime = 'video/mp4; codecs="' + codec + '"';
+  clog('MSE 启动, mime=' + mime + ', supported=' + (window.MediaSource ? MediaSource.isTypeSupported(mime) : 'no-ms'));
+  ms = new MediaSource();
+  vid.src = URL.createObjectURL(ms);
+  try { vid.load(); } catch (e) {}
+  clog('MSE src 已设置, readyState=' + ms.readyState + ' rs=' + vid.readyState);
+  setTimeout(function () { if (mseMode) clog('MSE 2s: msState=' + (ms ? ms.readyState : 'null') + ' sb=' + (sb ? 1 : 0) + ' ' + mseStats()); }, 2000);
+  setTimeout(function () {
+    if (mseMode && !sb) {
+      clog('MSE 5s 仍未 sourceopen，放弃该通道');
+      fallbackToJpeg('MediaSource 未就绪');
+    }
+  }, 5000);
+  ms.addEventListener('sourceopen', function () {
+    clog('MSE sourceopen 触发, ' + mseStats());
+    try {
+      sb = ms.addSourceBuffer(mime);          // 必须是完整 MIME，不能只给 codec
+    } catch (e) {
+      clog('addSourceBuffer 失败: ' + (e && e.name) + ' ' + (e && e.message));
+      fallbackToJpeg('MSE 不支持 ' + codec);
+      return;
+    }
+    sb.addEventListener('updateend', function () {
+      try {
+        if (!mseStarted && vid.buffered.length) {
+          vid.currentTime = vid.buffered.start(0);   // 从第一块可用数据开始，兼容非 0 起点
+          mseStarted = true;
+          const pr = vid.play();
+          if (pr) pr.catch(function () {});
+          clog('MSE 开始播放, start=' + vid.buffered.start(0).toFixed(2));
+        } else if (vid.buffered.length) {
+          const end = vid.buffered.end(vid.buffered.length - 1);
+          // 只保留 2 秒窗口：缓冲一大，手机端解码队列会被压住，表现出来就是卡死
+          try {
+            if (end - vid.currentTime > 2.0) {
+              const st = vid.buffered.start(0);
+              if (vid.currentTime - st > 0.5) sb.remove(0, vid.currentTime - 0.5);
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+      pumpMse();
+    });
+    msReady = true;
+    pumpMse();
+    const p = vid.play();
+    if (p) p.catch(function (e) { clog('play() 被拒绝: ' + (e && e.name)); });
+    // 播放状态回传，方便在没有控制台的手机上看问题
+    ['loadedmetadata', 'playing', 'waiting', 'stalled', 'pause', 'error'].forEach(function (ev) {
+      vid.addEventListener(ev, function () { clog('vid ' + ev + ' ' + mseStats()); });
+    });
+    // 每 3 秒回传一次播放状态（前 30 秒内），便于远程定位
+    let dbgCount = 0;
+    const dbgTimer = setInterval(() => {
+      if (!mseMode || dbgCount++ > 10) { clearInterval(dbgTimer); return; }
+      clog('mse ' + mseStats() + ' frames=' + decFrames);
+    }, 3000);
+  }, { once: true });
+}
+
+function mseStats() {
+  var ranges = '';
+  try {
+    for (var i = 0; i < vid.buffered.length; i++) {
+      ranges += (i ? ',' : '') + vid.buffered.start(i).toFixed(2) + '-' + vid.buffered.end(i).toFixed(2);
+    }
+  } catch (e) {}
+  return 't=' + (vid.currentTime || 0).toFixed(2) + ' ranges=[' + ranges + '] rs=' + vid.readyState +
+         ' q=' + mseQueue.length + ' err=' + (vid.error ? vid.error.code : 0) + ' paused=' + (vid.paused ? 1 : 0);
+}
+
+function pumpMse() {
+  if (!mseMode || !msReady || !sb || sb.updating) return;
+  if (initSeg && !initAppended) {
+    try { sb.appendBuffer(initSeg); initAppended = true; } catch (e) { return; }
+    return;
+  }
+  if (!initAppended || mseQueue.length === 0) return;
+  const chunk = mseQueue.shift();
+  try {
+    sb.appendBuffer(chunk);
+  } catch (e) {
+    if (e && e.name === 'QuotaExceededError') {
+      mseQueue.unshift(chunk);
+      try { sb.remove(0, Math.max(0, vid.currentTime - 2)); } catch (e2) {}
+    } else {
+      clog('appendBuffer 失败: ' + (e && e.name) + ' ' + (e && e.message));
+      fallbackToJpeg('MSE 追加失败: ' + (e && e.name));
+    }
+  }
+}
+
+function mseAppend(bytes) {
+  if (mseQueue.length > 240) mseQueue.shift();   // 积压太多说明跟不上，丢旧分片保实时
+  mseQueue.push(bytes);
+  pumpMse();
+}
+
+function stopMse() {
+  mseMode = false;
+  msReady = false;
+  mseQueue = [];
+  sb = null;
+  if (ms) {
+    try { ms.endOfStream(); } catch (e) {}
+    ms = null;
+  }
+  try { vid.pause(); } catch (e) {}
+  vid.removeAttribute('src');
+  try { vid.load(); } catch (e) {}
+  vid.classList.remove('show');
+  cv.classList.remove('hide');
+}
+
+function base64ToBytes(b64) {
+  if (!b64) return null;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function onBinary(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8.length < 2) return;
+
+  // 类型 4：UTF-8 JSON（auth_ok 等关键控制消息的二进制兜底通道）
+  if (u8[0] === 4) {
+    try { onText(new TextDecoder('utf-8').decode(u8.subarray(1))); } catch (_) {}
+    return;
+  }
+
+  // 有些 WebView 会把「文本帧」也按二进制送进来（本机 MIUI 浏览器就是这样，
+  // 表现为 auth_ok / stats 全收不到、只有画面能动）。协议里二进制帧的首字节只会是
+  // 0~3，JSON 文本以 '{'（0x7B）开头，据此把文本救回来。
+  if (u8[0] > 3) {
+    try { onText(new TextDecoder('utf-8').decode(u8)); } catch (_) {}
+    return;
+  }
+
+  // 类型 2：JPEG 静态帧（WebCodecs 不可用时的兜底通道）
+  if (u8[0] === 2) { drawJpeg(u8.subarray(1)); return; }
+
+  // 类型 3：fMP4 分片（MediaSource 通道）
+  if (u8[0] === 3) { mseAppend(u8.subarray(1)); return; }
+
+  const isKey = u8[0] === 1;
+  const data = u8.subarray(1);
+
+  // 关键帧一定先喂，且保证解码器已配置（服务端换分辨率后 description 会变）
+  if (!vdec && !ensureDecoder()) return;
+  if (vdec.state === 'unconfigured') {
+    if (!isKey) return;
+    if (!ensureDecoder()) return;
+  }
+  if (vdec.state === 'closed') { vdec = null; if (!isKey || !ensureDecoder()) return; }
+
+  // 积压太多就丢非关键帧，优先保证实时性
+  if (!isKey && vdec.decodeQueueSize > 10) return;
+
+  try {
+    vdec.decode(new EncodedVideoChunk({
+      type: isKey ? 'key' : 'delta',
+      timestamp: Math.round(performance.now() * 1000),
+      data
+    }));
+  } catch (e) {
+    console.error('decode err', e);
+    resetDecoder();
+  }
+}
+
+// ============ WebSocket ============
+function showError(msg) { errBox.textContent = msg; }
+let noticeTimer = null;
+function showNotice(msg, holdMs) {
+  notice.textContent = msg;
+  notice.classList.remove('hide');
+  if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+  // 提示条只是"告知一下"，几秒后自动收起，不用一直压在画面上
+  noticeTimer = setTimeout(hideNotice, holdMs || 6000);
+}
+function hideNotice() {
+  notice.classList.add('hide');
+  if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+}
+notice.addEventListener('click', hideNotice);
+notice.addEventListener('touchstart', hideNotice, { passive: true });
+function hideLogin() { login.classList.add('hide'); document.body.classList.add('ready'); }
+
+// H.264 迟迟出不了画面 → 自动重连并申请 JPEG 兼容通道（只降级一次，避免来回抖）
+function fallbackToJpeg(reason) {
+  if (jpegFallbackDone || jpegMode) return;
+  jpegFallbackDone = true;
+  forceJpeg = true;
+  stopMse();
+  if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+  showNotice(reason + '，正在切换到兼容模式（静态帧，画面跟手但帧率较低）…');
+  try { ws.close(); } catch (e) {}
+}
+
+// JPEG 帧：createImageBitmap 解码后画到画布；出错时悄悄跳过（下一帧马上到）
+let jpegBusy = false;
+// 以“收到真实画面帧”为准进入已连接状态（兜住个别浏览器丢 auth_ok 文本帧）
+function autoConnected(why) {
+  if (connected) return;
+  connected = true;
+  if (authTimer) { clearTimeout(authTimer); authTimer = null; }
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  jpegMode = true;
+  hideLogin();
+  showHud(true);
+  beacon('auto-connected via ' + why);
+}
+
+function drawJpeg(bytes) {  if (jpegBusy) return;            // 上一张还没画完，直接丢这一张，避免排队
+  jpegBusy = true;
+  const blob = new Blob([bytes], { type: 'image/jpeg' });
+  createImageBitmap(blob).then(bmp => {
+    if (bmp.width && bmp.height && (cv.width !== bmp.width || cv.height !== bmp.height)) {
+      cv.width = bmp.width;
+      cv.height = bmp.height;
+    }
+    ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+    bmp.close && bmp.close();
+    decFrames++;
+    lastFrameAt = performance.now();
+    decodedOnce = true;
+    if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+    jpegBusy = false;
+    // 能收到并画出真正的画面帧，就说明服务端已经鉴权通过并把流推过来了。
+    // 少数手机浏览器会丢掉第一条 auth_ok 文本帧，导致登录框关不掉——这里以帧为准自愈。
+    if (!connected) autoConnected('jpeg-frame');
+  }).catch(() => { jpegBusy = false; });
+}
+
+function sendJson(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// 把客户端侧的报错回传到服务端日志，手机上没法开控制台时靠这个排查
+function clog(text) {
+  sendJson({ type: 'log', text: String(text).slice(0, 300) });
+  beacon(text);            // WS 不通时也能上报
+}
+
+// 纯 HTTP 打点：即使 WebSocket 连不上也能看到客户端进度（服务端要求带密码，避免被刷日志）
+let beaconPwd = '';
+function beacon(text) {
+  try {
+    if (!beaconPwd) return;
+    const s = String(text).slice(0, 200).replace(/[\r\n]/g, ' ');
+    (new Image()).src = '/caps-result?token=' + encodeURIComponent(beaconPwd) +
+                        '&d=' + encodeURIComponent('P|' + s + '|' + Date.now());
+  } catch (e) {}
+}
+
+window.onerror = function (msg, src, line, col, err) {
+  beacon('JSERR ' + msg + ' @' + line + ':' + col);
+};
+
+function connect(pwd) {
+  const host = location.hostname || '127.0.0.1';
+  const url = `ws://${host}:${WS_PORT}`;
+  beaconPwd = pwd;
+  beacon('connect->' + url);
+  errBox.textContent = '';
+  try { ws = new WebSocket(url); } catch (e) { showError('无法连接: ' + e.message + '（' + url + '）'); return; }
+  ws.binaryType = 'arraybuffer';
+
+  // 连上了但迟迟没有 auth_ok：说明服务端没在正常应答，别让用户一直盯着密码框
+  authTimer = setTimeout(() => {
+    if (!connected) showError('已连上 ' + url + '，但 8 秒内没有收到服务端响应（事件流: ' +
+      JSON.stringify((window.__evts || []).slice(-4)) + '），请确认服务正在运行');
+  }, 8000);
+
+  window.__lastEvt = 'ws-created ' + url;
+
+  // 没进入已连接态时周期性 ping：服务端收到 ping 会补发 auth_ok，
+  // 用来兜住“部分手机浏览器吞掉第一条文本帧”的问题
+  if (pingTimer) clearInterval(pingTimer);
+  pingTimer = setInterval(() => {
+    if (!connected) sendJson({ type: 'ping' });
+  }, 1500);
+
+  ws.onopen = () => {
+    // 能力顺序：WebCodecs(H.264) > JPEG 静态帧（MSE 需显式 ?mse=1 才用：
+    // 多数手机自带浏览器的 MSE 解不了实时 fMP4 分片，反而黑屏/卡顿）
+    const optMse = /(?:^|[?&])mse=1/.test(location.search);
+    const mode = forceJpeg ? 'jpeg'
+      : (typeof VideoDecoder !== 'undefined' ? 'h264' : (optMse && hasMse() ? 'mse' : 'jpeg'));
+    clog('auth mode=' + mode + ' webcodecs=' + (typeof VideoDecoder !== 'undefined') + ' mse=' + hasMse() +
+         ' secure=' + (window.isSecureContext ? 1 : 0));
+    beacon('ws-onopen');
+    sendJson({ type: 'auth', password: pwd, codec: mode });
+    lastAuthPayload = { type: 'auth', password: pwd, codec: mode };
+    // 告诉电脑"我这块屏多大"，扩展屏就按这个尺寸出画（不拉伸、不变形）
+    try {
+      const w = Math.round(Math.min(2560, (visualViewport ? visualViewport.width : innerWidth) * (devicePixelRatio || 1)));
+      const h = Math.round(Math.min(1600, (visualViewport ? visualViewport.height : innerHeight) * (devicePixelRatio || 1)));
+      sendJson({ type: 'viewport', w: w, h: h });
+    } catch (_) {}
+  };
+
+  ws.onmessage = e => {
+    window.__lastEvt = 'msg:' + (typeof e.data === 'string' ? e.data.slice(0, 60) : ('bin ' + (e.data.byteLength || 0)));
+    try {
+      window.__evts = window.__evts || [];
+      window.__evts.push(typeof e.data === 'string' ? ('S:' + e.data.slice(0, 24)) : 'B');
+      if (window.__evts.length > 6) window.__evts.shift();
+    } catch (_) {}
+    if (typeof e.data === 'string') return onText(e.data);
+    if (typeof Blob !== 'undefined' && e.data instanceof Blob) {
+      e.data.arrayBuffer().then(b => onBinary(b)).catch(() => {});
+      return;
+    }
+    onBinary(e.data);
+  };
+
+  ws.onclose = () => {
+    window.__lastEvt = 'ws-close';
+    connected = false;
+    releaseAllKeys();
+    resetDecoder();
+    stopMse();
+    setHud();
+    if (login.classList.contains('hide')) {
+      // 已连接过 → 自动重连
+      setTimeout(() => connect(localStorage.getItem('vds.pwd') || pwd), 1500);
+    }
+  };
+
+  ws.onerror = () => { beacon('ws-onerror'); showError('连接失败，请检查地址、端口与防火墙'); };
+}
+
+function onText(text) {
+  let msg;
+  try { msg = JSON.parse(text); } catch (e) { return; }
+
+  // 注意：这里不再因为收到 stats 就重发鉴权——那条逻辑会让客户端每秒鉴权一次，
+  // 而且真正的问题（auth_ok 文本帧被浏览器吞掉）已经由「收到画面帧即视为连接成功」兜住了。
+
+  switch (msg.type) {
+    case 'lock': {
+      lockFlag = !!msg.locked;
+      updateScreenState();
+      return;
+    }
+    case 'fmp4_init': {
+      // fMP4 的 moov：必须最先 append；第二次收到说明服务端重开了通道，要整体重建
+      const bytes = base64ToBytes(msg.data);
+      if (!mseMode || !bytes) return;
+      if (initSeg) { stopMse(); startMse(codecStr); }
+      initSeg = bytes;
+      pumpMse();
+      return;
+    }
+    case 'auth_ok': {
+      // 先关登录框：后面任何一步初始化失败都不该把用户卡在密码界面上
+      connected = true;
+      if (authTimer) { clearTimeout(authTimer); authTimer = null; }
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      hideLogin();
+      showHud(true);
+      beacon('auth_ok ' + (msg.mode || ''));
+      try {
+      jpegMode = msg.mode === 'jpeg';
+      codecStr = msg.codec || codecStr;
+      descBytes = base64ToBytes(msg.description);
+      videoW = msg.width || videoW;
+      videoH = msg.height || videoH;
+      serverFps = msg.fps || serverFps;
+      cv.width = videoW;
+      cv.height = videoH;
+      fitStage();
+      resetDecoder();
+      decodedOnce = false;
+      if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+      if (msg.mode === 'mse') {
+        hideNotice();
+        startMse(codecStr);
+        if (vid.requestVideoFrameCallback) {
+          const tick = () => {
+            decFrames++;
+            lastFrameAt = performance.now();
+            decodedOnce = true;
+            if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+            vid.requestVideoFrameCallback(tick);
+          };
+          vid.requestVideoFrameCallback(tick);
+        } else {
+          clog('requestVideoFrameCallback 不可用');
+        }
+        // 6 秒还没有任何画面 → 判定 MSE 不可用，退回 JPEG
+        frameWatch = setTimeout(() => {
+          frameWatch = null;
+          if (!connected || decodedOnce) return;
+          fallbackToJpeg('MSE 6 秒无画面');
+        }, 6000);
+      } else if (jpegMode) {
+        showNotice('兼容模式：按静态帧串流（约 20fps）。此浏览器在 http 页面下没有 WebCodecs；' +
+                   '想要极致平滑请用 Chrome 或 HTTPS 打开。', 6000);
+        // 回传客户端实际渲染帧率，便于远程确认流畅度
+        let dbgN = 1;
+        const dbgT = setInterval(() => {
+          if (!jpegMode || dbgN > 4) { clearInterval(dbgT); return; }
+          clog('jpeg 当前帧率 ' + decFps + 'fps（第 ' + dbgN + ' 次采样）');
+          dbgN++;
+        }, 5000);
+      } else {
+        hideNotice();
+        ensureDecoder();
+        // 兜底：4 秒还没画出一帧，就判定 H.264 解码不可用，切兼容通道
+        frameWatch = setTimeout(() => {
+          frameWatch = null;
+          if (!connected || decodedOnce) return;
+          fallbackToJpeg('H.264 解码 4 秒无画面');
+        }, 4000);
+      }
+      if (msg.source) currentSource = msg.source;
+      virtualCount = msg.virtual || 0;
+      setMonitors(msg.monitors, msg.monitor);
+      setHud();
+      } catch (err) {
+        showError('连接成功但初始化失败: ' + (err && err.message ? err.message : err));
+      }
+      return;
+    }
+    case 'windows': {
+      setWindows(msg.list, msg.current);
+      return;
+    }
+    case 'source': {
+      if (msg.source) currentSource = msg.source;
+      if (msg.virtual !== undefined) virtualCount = msg.virtual || 0;
+      if (msg.windows) setWindows(msg.windows, msg.source);
+      renderVirtualPicker();
+      setHud();
+      return;
+    }
+    case 'virtual': {
+      virtualCount = msg.count || 0;
+      if (msg.source) currentSource = msg.source;
+      if (msg.list) setWindows(msg.list, msg.source);
+      renderVirtualPicker();
+      setHud();
+      return;
+    }
+    case 'auth_fail': {
+      localStorage.removeItem('vds.pwd');
+      errBox.textContent = '密码错误，请重试';
+      document.body.classList.remove('ready');
+      login.classList.remove('hide');
+      try { ws.close(); } catch (e) {}
+      return;
+    }
+    case 'video_info': {
+      codecStr = msg.codec || codecStr;
+      descBytes = base64ToBytes(msg.description);
+      videoW = msg.width || videoW;
+      videoH = msg.height || videoH;
+      serverFps = msg.fps || serverFps;
+      if (jpegMode) { setHud(); return; }   // JPEG 模式尺寸由实际帧决定
+      cv.width = videoW;
+      cv.height = videoH;
+      resetDecoder();   // 等下一个关键帧重建解码器
+      ensureDecoder();
+      setHud();
+      return;
+    }
+    case 'stats': {
+      serverFps = msg.fps ?? serverFps;
+      serverKbps = msg.kbps ?? serverKbps;
+      clients = msg.clients ?? clients;
+      captureOk = msg.capturing !== false;
+      setHud();
+      return;
+    }
+  }
+}
+
+// ============ 输入转发 ============
+function updateCoords(e) {
+  // 输入映射按"当前可见的画面元素"算：WebCodecs/JPEG 用 canvas，MSE 用 video
+  const el = mseMode ? vid : cv;
+  const r = el.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  const y = (e.clientY - r.top) / r.height;
+  return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+}
+
+function buttonName(e) {
+  if (e.button === 2) return 'right';
+  if (e.button === 1) return 'middle';
+  return 'left';
+}
+
+function sendMove(x, y) {
+  const now = performance.now();
+  pendingMove = { x, y };
+  if (now - lastMoveSend < 16) {
+    // 节流期间只保留最后一次坐标，但要补一次定时器，否则光标会停在半路
+    if (!moveTimer) {
+      moveTimer = setTimeout(() => {
+        moveTimer = null;
+        flushPendingMove();
+      }, 16);
+    }
+    return;
+  }
+  lastMoveSend = now;
+  const p = pendingMove;
+  pendingMove = null;
+  sendJson({ type: 'input', ev: 'move', x: p.x, y: p.y });
+}
+
+function flushPendingMove() {
+  if (pendingMove) {
+    const p = pendingMove;
+    pendingMove = null;
+    lastMoveSend = performance.now();
+    sendJson({ type: 'input', ev: 'move', x: p.x, y: p.y });
+  }
+}
+
+if (ALLOW_INPUT) {
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture?.(e.pointerId);
+    const p = updateCoords(e);
+    if (e.pointerType === 'pen') {
+      penDown = true;
+      sendJson({ type: 'input', ev: 'pen_down', x: p.x, y: p.y, pressure: e.pressure || 0.5 });
+    } else {
+      sendJson({ type: 'input', ev: 'down', x: p.x, y: p.y, button: buttonName(e) });
+    }
+    e.preventDefault();
+  });
+
+  cv.addEventListener('pointermove', e => {
+    const p = updateCoords(e);
+    if (e.pointerType === 'pen') {
+      if (!penDown) return;
+      sendJson({ type: 'input', ev: 'pen_move', x: p.x, y: p.y, pressure: e.pressure || 0.5 });
+    } else {
+      sendMove(p.x, p.y);
+    }
+    e.preventDefault();
+  });
+
+  const endPointer = e => {
+    const p = updateCoords(e);
+    flushPendingMove();
+    if (e.pointerType === 'pen') {
+      if (!penDown) return;
+      penDown = false;
+      sendJson({ type: 'input', ev: 'pen_up', x: p.x, y: p.y });
+    } else {
+      sendJson({ type: 'input', ev: 'up', x: p.x, y: p.y, button: buttonName(e) });
+    }
+    e.preventDefault();
+  };
+  cv.addEventListener('pointerup', endPointer);
+  cv.addEventListener('pointercancel', endPointer);
+
+  cv.addEventListener('wheel', e => {
+    const p = updateCoords(e);
+    const delta = Math.round(e.deltaY * 1.2);
+    if (!delta) return;
+    sendJson({ type: 'input', ev: 'wheel', x: p.x, y: p.y, delta });
+    e.preventDefault();
+  }, { passive: false });
+}
+
+// ============ 启动 ============
+document.getElementById('go').onclick = () => {
+  const pwd = pwdInput.value || localStorage.getItem('vds.pwd') || '';
+  if (!pwd) { showError('请输入密码'); return; }
+  localStorage.setItem('vds.pwd', pwd);
+  connect(pwd);
+};
+pwdInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('go').click(); });
+
+setInterval(() => {
+  const now = performance.now();
+  if (now - lastDecStat >= 1000) {
+    decFps = decFrames;
+    decFrames = 0;
+    lastDecStat = now;
+    latencyMs = lastFrameAt ? Math.round(now - lastFrameAt) : 0;
+    setHud();
+  }
+}, 1000);
+
+// 有缓存密码就直接连，否则等用户输入
+const savedPwd = localStorage.getItem('vds.pwd');
+if (savedPwd) {
+  pwdInput.value = savedPwd;
+  connect(savedPwd);
+} else {
+  pwdInput.focus();
+}
+</script>
+</body>
+</html>
+

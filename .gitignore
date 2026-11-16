@@ -1,0 +1,36 @@
+# 构建产物
+bin/
+obj/
+dist/
+publish/
+
+# 运行时依赖（FFmpeg 动态库，体积大，另行分发）
+ffmpeg/
+
+# 虚拟显示器驱动（另行分发）
+driver/
+
+# 日志与崩溃转储
+logs/
+*.log
+crash_*.log
+
+# 运行期生成
+vdd_slots.txt
+uisettings.json
+appconfig.json
+appconfig.json.bak*
+appconfig.json.corrupted-*
+
+# IDE / 用户配置
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.trae/
+.workbuddy/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
