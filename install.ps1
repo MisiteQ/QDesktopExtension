@@ -87,7 +87,7 @@ foreach ($lnkPath in $shortcutTargets) {
     $lnk.TargetPath = $exe
     $lnk.WorkingDirectory = $target
     $lnk.IconLocation = "$exe,0"
-    $lnk.Description = '远程桌面串流服务（托盘 + 设置面板）'
+    $lnk.Description = '桌面扩展平台（托盘 + 设置面板）'
     $lnk.Save()
     Write-Host "  快捷方式: $lnkPath"
 }
