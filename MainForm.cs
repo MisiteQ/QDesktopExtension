@@ -38,7 +38,7 @@ public sealed class MainForm : Form
     private readonly RadioButton _rbLinkLan = new() { Text = "局域网地址", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
     private readonly RadioButton _rbLinkUsb = new() { Text = "USB 数据线", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
     private readonly RadioButton _rbLinkBoth = new() { Text = "两种都允许", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
-    private readonly Label _lblUsbStatus = new() { AutoSize = true, MaximumSize = new Size(700, 0), ForeColor = Color.FromArgb(40, 40, 48) };
+    private readonly Label _lblUsbStatus = new() { AutoSize = true, MaximumSize = new Size(700, 0) };
     private readonly UiButton _btnUsbRefresh = new() { Text = "重新检测 USB" };
     private readonly RadioButton _rbExtend = new() { Text = "扩展屏", AutoSize = true, Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold) };
     private readonly ComboBox _cmbSource = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 460 };
@@ -167,9 +167,9 @@ public sealed class MainForm : Form
     private void BuildLayout()
     {
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Background };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(84)));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(62)));
         Controls.Add(root);
 
         root.Controls.Add(BuildHeader(), 0, 0);
@@ -203,8 +203,8 @@ public sealed class MainForm : Form
         });
 
         var identity = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = UiTheme.Background };
-        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(30)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(24)));
         identity.Controls.Add(new Label
         {
             Text = "QDesktopExtension",
@@ -259,10 +259,10 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
-            Padding = new Padding(18, 14, 18, 8),
+            Padding = HPad(18, 14, 18, 8),
             BackColor = UiTheme.Background
         };
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, H(124)));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         body.Controls.Add(BuildAddressCard(), 0, 0);
         body.Controls.Add(BuildTabs(), 0, 1);
@@ -277,9 +277,9 @@ public sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Surface };
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(26)));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(34)));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(26)));
         text.Controls.Add(new Label { Text = "手机 / 平板 / 另一台电脑访问", AutoSize = true, ForeColor = UiTheme.Muted }, 0, 0);
         _lblUrl.ForeColor = UiTheme.Text;
         _lblUrl.AutoSize = false;
@@ -376,7 +376,7 @@ public sealed class MainForm : Form
                 Cursor = Cursors.Hand
             };
             var stack = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = UiTheme.SurfaceAlt };
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(32)));
             stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             radio.AutoSize = false;
             radio.Dock = DockStyle.Fill;
@@ -552,13 +552,19 @@ public sealed class MainForm : Form
     }
 
     // ---------- 小工具 ----------
-    private static TabPage NewPage(string text) => new(text)
+    /// <summary>
+    /// 设计像素（96 DPI 基准）→ 当前 DPI 像素。字体随 DPI 变大，但代码里写死的行高、内边距不会自己缩放，
+    /// 不换算就会出现"字比行高、说明文字被拦腰裁掉"（140% 缩放下实测复现）。
+    /// </summary>
+    private int H(int designPx) => (int)Math.Round(designPx * DeviceDpi / 96f);
+    private Padding HPad(int left, int top, int right, int bottom) => new(H(left), H(top), H(right), H(bottom));
+    private TabPage NewPage(string text) => new(text)
     {
         BackColor = UiTheme.Background,
         Padding = Padding.Empty
     };
 
-    private static TableLayoutPanel PageGrid(TabPage page)
+    private TableLayoutPanel PageGrid(TabPage page)
     {
         // AutoScroll 与 Dock=Fill 放在同一个 TableLayoutPanel 上时，较高页面出现滚动条
         // 会反复改变可用宽度并触发布局循环。外层只负责滚动，内层按固定行高向下增长。
@@ -568,7 +574,6 @@ public sealed class MainForm : Form
             BackColor = UiTheme.Background,
             AutoScroll = true
         };
-        UiTheme.EnableDarkChrome(scroll);
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -577,7 +582,7 @@ public sealed class MainForm : Form
             ColumnCount = 1,
             RowCount = 0,
             BackColor = UiTheme.Background,
-            Padding = new Padding(16)
+            Padding = HPad(16, 16, 16, 16)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         scroll.Controls.Add(layout);
@@ -585,15 +590,15 @@ public sealed class MainForm : Form
         return layout;
     }
 
-    private static TableLayoutPanel AddCard(TableLayoutPanel page, int height, string title, string? description = null)
+    private TableLayoutPanel AddCard(TableLayoutPanel page, int height, string title, string? description = null)
     {
         var row = page.RowCount++;
-        page.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        page.RowStyles.Add(new RowStyle(SizeType.Absolute, H(height)));
         var card = new UiCardPanel
         {
             Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 0, 12),
-            Padding = new Padding(18, 14, 18, 14)
+            Margin = new Padding(0, 0, 0, H(12)),
+            Padding = HPad(18, 14, 18, 14)
         };
         var stack = new TableLayoutPanel
         {
@@ -602,12 +607,12 @@ public sealed class MainForm : Form
             RowCount = description == null ? 2 : 3,
             BackColor = UiTheme.Surface
         };
-        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(32)));
         stack.Controls.Add(SectionTitle(title), 0, 0);
         var formRow = 1;
         if (description != null)
         {
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(36)));
             stack.Controls.Add(new Label
             {
                 Text = description,
@@ -628,7 +633,7 @@ public sealed class MainForm : Form
             BackColor = UiTheme.Surface,
             Margin = Padding.Empty
         };
-        form.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        form.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, H(150)));
         form.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         stack.Controls.Add(form, 0, formRow);
         card.Controls.Add(stack);
@@ -636,7 +641,7 @@ public sealed class MainForm : Form
         return form;
     }
 
-    private static Label SectionTitle(string text) => new()
+    private Label SectionTitle(string text) => new()
     {
         Text = text,
         AutoSize = true,
@@ -645,7 +650,7 @@ public sealed class MainForm : Form
         Margin = Padding.Empty
     };
 
-    private static Label Hint(string text) => new()
+    private Label Hint(string text) => new()
     {
         Text = text,
         AutoSize = false,
@@ -655,10 +660,10 @@ public sealed class MainForm : Form
         Margin = Padding.Empty
     };
 
-    private static void AddRow(TableLayoutPanel table, string label, Control control, int height = 34)
+    private void AddRow(TableLayoutPanel table, string label, Control control, int height = 34)
     {
         var row = table.RowCount++;
-        table.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        table.RowStyles.Add(new RowStyle(SizeType.Absolute, H(height)));
         if (label.Length > 0)
         {
             table.Controls.Add(new Label
@@ -681,10 +686,10 @@ public sealed class MainForm : Form
         table.Controls.Add(control, 1, row);
     }
 
-    private static void AddWideRow(TableLayoutPanel table, Control control, int height)
+    private void AddWideRow(TableLayoutPanel table, Control control, int height)
     {
         var row = table.RowCount++;
-        table.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        table.RowStyles.Add(new RowStyle(SizeType.Absolute, H(height)));
         control.Dock = DockStyle.Fill;
         control.Margin = Padding.Empty;
         table.Controls.Add(control, 0, row);

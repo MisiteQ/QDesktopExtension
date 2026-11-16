@@ -3,22 +3,23 @@ using System.Runtime.InteropServices;
 
 namespace QDesktopExtension;
 
-/// <summary>桌面端统一的深色琥珀主题与轻量自绘控件。</summary>
+/// <summary>桌面端统一的浅色主题与轻量自绘控件。白卡片 + 浅灰底 + 单一蓝色强调色。</summary>
 internal static class UiTheme
 {
-    public static readonly Color Background = Color.FromArgb(7, 8, 10);
-    public static readonly Color Surface = Color.FromArgb(17, 19, 24);
-    public static readonly Color SurfaceAlt = Color.FromArgb(25, 28, 35);
-    public static readonly Color Border = Color.FromArgb(43, 47, 56);
-    public static readonly Color Text = Color.FromArgb(236, 238, 243);
-    public static readonly Color Muted = Color.FromArgb(139, 144, 156);
-    public static readonly Color Dim = Color.FromArgb(90, 95, 106);
-    public static readonly Color Accent = Color.FromArgb(255, 180, 84);
-    public static readonly Color AccentHover = Color.FromArgb(255, 198, 114);
-    public static readonly Color AccentPressed = Color.FromArgb(232, 155, 56);
-    public static readonly Color AccentInk = Color.FromArgb(26, 18, 6);
-    public static readonly Color Ok = Color.FromArgb(110, 231, 168);
-    public static readonly Color Bad = Color.FromArgb(255, 128, 128);
+    public static readonly Color Background = Color.FromArgb(243, 245, 248);   // 页面底：浅灰
+    public static readonly Color Surface = Color.White;                        // 卡片：白
+    public static readonly Color SurfaceAlt = Color.FromArgb(240, 243, 247);   // 输入控件 / 次级面
+    public static readonly Color Border = Color.FromArgb(214, 221, 230);
+    public static readonly Color Text = Color.FromArgb(24, 33, 47);
+    public static readonly Color Muted = Color.FromArgb(100, 113, 128);
+    public static readonly Color Dim = Color.FromArgb(150, 159, 171);
+    public static readonly Color Accent = Color.FromArgb(37, 99, 235);         // 主蓝
+    public static readonly Color AccentHover = Color.FromArgb(31, 87, 214);
+    public static readonly Color AccentPressed = Color.FromArgb(24, 72, 178);
+    public static readonly Color AccentInk = Color.White;                      // 主按钮上的文字
+    public static readonly Color AccentSoft = Color.FromArgb(234, 241, 255);   // 强调色的浅底（描边按钮悬停）
+    public static readonly Color Ok = Color.FromArgb(22, 163, 74);
+    public static readonly Color Bad = Color.FromArgb(214, 52, 52);
 
     public static Font Body(float size = 9.5f, FontStyle style = FontStyle.Regular) =>
         new("Microsoft YaHei UI", size, style);
@@ -35,8 +36,8 @@ internal static class UiTheme
         form.BackColor = Background;
         form.ForeColor = Text;
         form.Font = Body();
-        form.HandleCreated += (_, _) => TryDarkTitleBar(form.Handle);
-        if (form.IsHandleCreated) TryDarkTitleBar(form.Handle);
+        form.HandleCreated += (_, _) => TryLightTitleBar(form.Handle);
+        if (form.IsHandleCreated) TryLightTitleBar(form.Handle);
     }
 
     public static void EnableDarkChrome(Control control, string theme = "DarkMode_Explorer")
@@ -48,9 +49,8 @@ internal static class UiTheme
 
     public static void StyleInput(Control control)
     {
-        if (control is ComboBox) EnableDarkChrome(control, "DarkMode_CFD");
-        else if (control is NumericUpDown or TextBox or CheckedListBox) EnableDarkChrome(control);
-
+        // 浅色主题：全部走系统默认的亮色渲染，不再挂 DarkMode_* 子主题
+        // （之前深色版会 SetWindowTheme("DarkMode_CFD")，下拉框/数字框会被画成黑底白字）
         switch (control)
         {
             case ComboBox combo:
@@ -62,7 +62,6 @@ internal static class UiTheme
                 numeric.BackColor = SurfaceAlt;
                 numeric.ForeColor = Text;
                 numeric.BorderStyle = BorderStyle.FixedSingle;
-                foreach (Control child in numeric.Controls) EnableDarkChrome(child);
                 break;
             case TextBox text:
                 text.BackColor = SurfaceAlt;
@@ -105,14 +104,14 @@ internal static class UiTheme
         return path;
     }
 
-    private static void TryDarkTitleBar(IntPtr handle)
+    private static void TryLightTitleBar(IntPtr handle)
     {
         if (handle == IntPtr.Zero || !OperatingSystem.IsWindows()) return;
         try
         {
-            var enabled = 1;
-            if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
-                DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
+            // 浅色主题用系统默认的亮色标题栏：显式写 0，避免被此前版本写入的暗色属性残留
+            var dark = 0;
+            DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));
         }
         catch { }
     }
@@ -199,15 +198,15 @@ public sealed class UiButton : Button
                 case UiButtonRole.Outline:
                     border = UiTheme.Accent;
                     foreground = UiTheme.Accent;
-                    if (_hover || _pressed) fill = Color.FromArgb(42, 35, 24);
+                    if (_hover || _pressed) fill = UiTheme.AccentSoft;
                     break;
                 case UiButtonRole.Danger:
-                    border = _hover || _pressed ? UiTheme.Bad : Color.FromArgb(112, 62, 62);
+                    border = _hover || _pressed ? UiTheme.Bad : Color.FromArgb(226, 176, 176);
                     foreground = UiTheme.Bad;
-                    if (_hover || _pressed) fill = Color.FromArgb(48, 27, 29);
+                    if (_hover || _pressed) fill = Color.FromArgb(253, 240, 240);
                     break;
                 default:
-                    if (_hover || _pressed) fill = Color.FromArgb(34, 38, 47);
+                    if (_hover || _pressed) fill = Color.FromArgb(228, 233, 240);
                     break;
             }
             if (!Enabled)
