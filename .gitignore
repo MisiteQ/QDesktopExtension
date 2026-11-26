@@ -41,3 +41,7 @@ _*.json
 
 # 验证截图（本地产物）
 .screenshots/
+
+# 临时预览 / 测试产物
+.preview/
+preview/

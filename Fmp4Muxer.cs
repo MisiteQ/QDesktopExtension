@@ -92,7 +92,7 @@ public unsafe sealed class Fmp4Muxer : IDisposable
             _inTb = new AVRational { num = 1, den = 1000 };
             _outTb = st->time_base;
             InitSegment = TakePending();          // 头部的 moov 就是 init segment
-            if (InitSegment == null) throw new InvalidOperationException("未拿到 init segment");
+            if (InitSegment == null || InitSegment.Length == 0) throw new InvalidOperationException("未拿到 init segment");
         }
         catch
         {
@@ -152,12 +152,12 @@ public unsafe sealed class Fmp4Muxer : IDisposable
     private AVRational _inTb;
     private AVRational _outTb;
 
-    /// <summary>取走写回调攒下的全部字节（一次或多次分片），没有则返回 null。</summary>
-    public byte[]? TakePending()
+    /// <summary>取走写回调攒下的全部字节（一次或多次分片），没有数据时返回共享空数组（不返回 null）。</summary>
+    public byte[] TakePending()
     {
         lock (_lock)
         {
-            if (_pending.Count == 0) return null;
+            if (_pending.Count == 0) return Array.Empty<byte>();
             var total = 0;
             foreach (var b in _pending) total += b.Length;
             var outBytes = new byte[total];

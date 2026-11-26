@@ -99,9 +99,11 @@ $uninstallKey = if ($Scope -eq 'Machine') {
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\QDesktopExtension'
 }
 New-Item -Path $uninstallKey -Force | Out-Null
+# DisplayVersion 从 exe 文件版本资源读取，避免硬编码与实际版本脱节（单文件发布 exe 用 FileVersionInfo 读取，GetAssemblyName 对原生宿主无效）
+$exeVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
 $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-Set-ItemProperty -Path $uninstallKey -Name 'DisplayName' -Value 'QDesktopExtension 远程桌面服务'
-Set-ItemProperty -Path $uninstallKey -Name 'DisplayVersion' -Value '1.0'
+Set-ItemProperty -Path $uninstallKey -Name 'DisplayName' -Value 'QDesktopExtension 桌面扩展平台'
+Set-ItemProperty -Path $uninstallKey -Name 'DisplayVersion' -Value $exeVersion
 Set-ItemProperty -Path $uninstallKey -Name 'Publisher' -Value 'QDesktopExtension'
 Set-ItemProperty -Path $uninstallKey -Name 'InstallLocation' -Value $target
 Set-ItemProperty -Path $uninstallKey -Name 'DisplayIcon' -Value "$exe,0"

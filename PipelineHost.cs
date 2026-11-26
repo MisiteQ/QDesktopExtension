@@ -68,6 +68,17 @@ public sealed class ClientPipelineHost : IPipelineHost
     private int _w = 1280, _h = 720;
     private volatile byte[]? _init;   // 最近一次 fMP4 init segment（MSE 客户端重连时要重发）
 
+    // 热路径复用缓冲：BroadcastFrame/BroadcastFmp4 在编码管线线程顺序调用，共用一个缓冲；
+    // BroadcastJpeg 在 JPEG 线程，单独一个缓冲。仅各自线程访问，无需加锁。
+    private byte[]? _encPacket;
+    private byte[]? _jpegPacket;
+
+    private static byte[] EnsureBuffer(ref byte[]? buf, int len)
+    {
+        if (buf == null || buf.Length < len) buf = new byte[len];
+        return buf;
+    }
+
     public ClientPipelineHost(StreamServer server, IWebSocketConnection conn)
     {
         _server = server;
@@ -101,7 +112,7 @@ public sealed class ClientPipelineHost : IPipelineHost
         // 这条连接实际走的是 JPEG / MSE 通道时不要再喂裸 H.264：
         // 客户端会直接丢弃，带宽却照扣一份（等于把它们自己的配额白白吃掉一半）。
         if (_server.IsJpegClient(_conn) || _server.IsMseClient(_conn)) return;
-        var packet = new byte[data.Length + 1];
+        var packet = EnsureBuffer(ref _encPacket, data.Length + 1);
         packet[0] = keyFrame ? (byte)1 : (byte)0;
         Buffer.BlockCopy(data, 0, packet, 1, data.Length);
         if (!Quota(packet.Length)) return;
@@ -111,7 +122,7 @@ public sealed class ClientPipelineHost : IPipelineHost
     public void BroadcastJpeg(byte[] jpeg)
     {
         if (!_server.IsJpegClient(_conn)) return;
-        var packet = new byte[jpeg.Length + 1];
+        var packet = EnsureBuffer(ref _jpegPacket, jpeg.Length + 1);
         packet[0] = 2;
         Buffer.BlockCopy(jpeg, 0, packet, 1, jpeg.Length);
         if (!Quota(packet.Length)) return;
@@ -120,7 +131,7 @@ public sealed class ClientPipelineHost : IPipelineHost
     public void BroadcastFmp4(byte[] fragment)
     {
         if (!_server.IsMseClient(_conn)) return;
-        var packet = new byte[fragment.Length + 1];
+        var packet = EnsureBuffer(ref _encPacket, fragment.Length + 1);
         packet[0] = 3;
         Buffer.BlockCopy(fragment, 0, packet, 1, fragment.Length);
         if (!Quota(packet.Length)) return;

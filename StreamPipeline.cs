@@ -474,7 +474,7 @@ public sealed class StreamPipeline
             var ms = (long)((Stopwatch.GetTimestamp() - _muxStartTicks) * 1000.0 / Stopwatch.Frequency);
             _muxer.Write(frame.Data, frame.KeyFrame, ms);
             var chunk = _muxer.TakePending();
-            if (chunk != null) _host.BroadcastFmp4(chunk);
+            if (chunk.Length > 0) _host.BroadcastFmp4(chunk);
         }
         catch (Exception ex)
         {
@@ -708,9 +708,8 @@ public sealed class StreamPipeline
         _host.VirtualWindowCount = newVirtual?.WindowCount ?? _cfg.VirtualWindows.Count;
         _host.CurrentMonitor = effective.IsWindow ? -2 : effective.Virtual ? -3 : effective.MonitorIndex;
 
-        // 记住这次选择，重启后还能回到同一个窗口 / 同一套虚拟屏
-        _cfg.CaptureWindow = effective.IsWindow ? effective.Hwnd.ToInt64() : 0;
-        _cfg.CaptureWindowTitle = effective.IsWindow ? effective.Title : "";
+        // 记住这次选择，重启后还能回到同一套虚拟屏
+        // （窗口采集已收敛为复制/扩展两种，不再记录 CaptureWindow）
         _cfg.UseVirtualScreen = effective.Virtual;
         if (!effective.IsWindow && !effective.Virtual) _cfg.CaptureMonitor = effective.MonitorIndex;
 

@@ -17,6 +17,7 @@ public sealed class AppHost
     private StreamServer? _server;
     private UsbBridge? _usb;
     private ClientScreenManager? _clientScreens;
+    private Logger? _runLogger;
 
     /// <summary>USB 直连状态（给面板显示）。</summary>
     public UsbBridge? Usb => _usb;
@@ -115,57 +116,24 @@ public sealed class AppHost
         try
         {
             logger = new Logger(cfg);
+            _runLogger = logger;
             logger.Info("QDesktopExtension 启动");
             logger.Info($"配置文件: {_cfgPath}");
 
-            // 兜底记录：进程级未处理异常（含后台线程）至少要在日志里留下现场
-            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-            {
-                try { logger!.Error($"未处理异常，进程即将退出: {e.ExceptionObject}"); } catch { }
-            };
-            TaskScheduler.UnobservedTaskException += (_, e) =>
-            {
-                try { logger!.Warn($"后台任务未处理异常: {e.Exception?.GetBaseException().Message}"); } catch { }
-                e.SetObserved();
-            };
+            // 兜底记录：进程级未处理异常（含后台线程）至少要在日志里留下现场。
+            // 保存委托引用，停止时退订，避免反复启停累积订阅。
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
-            // 采集源：显示器 / 某个窗口 / 虚拟扩展屏（窗口句柄失效时按标题找回，再不行退回显示器）
-            var source = CaptureSource.FromConfig(cfg);
-            var virtualScreen = source.Virtual ? VirtualScreen.Build(cfg, logger) : null;
-            var rect = virtualScreen?.Rect ?? source.Rect;
-            logger.Info($"采集源: {source.Describe()} 区域 {rect}");
-
-            var stats = new StreamStats();
-            _stats = stats;
-            var acl = new AccessControl(cfg);
-            var traffic = new TrafficStat();
-            inkPen = new InkPen(cfg);
-            var touch = new TouchForwarder(cfg, inkPen, rect);
-            TouchForwarder.DebugLog = logger;
-            if (virtualScreen != null) touch.SetVirtualScreen(virtualScreen);
-
-            capture = source.CreateCapture(virtualScreen);
-            encoder = new VideoEncoder(cfg);
-            server = new StreamServer(cfg, logger, acl, traffic, touch, stats);
+            // 用共享工厂组装整套管线（采集 → 编码 → 服务 → 回调接线），避免与控制台模式重复实现
+            var bundle = PipelineFactory.BuildPipeline(cfg, logger);
+            capture = bundle.Capture;
+            encoder = bundle.Encoder;
+            server = bundle.Server;
+            inkPen = bundle.InkPen;
+            pipeline = bundle.Pipeline;
+            _stats = bundle.Stats;
             _server = server;
-
-            var target = InitialTarget(cfg, rect);
-            encoder.Init(target.Width, target.Height, capture.Width, capture.Height, cfg.Fps, target.BitRate);
-
-            server.UpdateVideoInfo(encoder);
-            server.CurrentMonitor = source.IsWindow ? -2 : source.Virtual ? -3 : source.MonitorIndex;
-            server.CurrentSource = source; 
-           server.VirtualWindowCount = cfg.VirtualWindows.Count;
-
-            var adaptive = new AdaptiveController(cfg, logger, capture.Width, capture.Height, target.BitRate);
-            var pipelineTmp = new StreamPipeline(cfg, logger, capture, encoder, adaptive, new ServerPipelineHost(server), stats, touch,
-                                              source, virtualScreen);
-            pipeline = pipelineTmp;
-            server.MonitorRequest = pipeline.RequestMonitor;
-            server.SourceRequest = pipeline.RequestSource;
-            server.VirtualAddRequest = (h, t) => pipeline.AddVirtualWindow(h, t);
-            server.VirtualClearRequest = pipeline.ClearVirtualWindows;
-            server.ViewportRequest = pipeline.OnClientViewport;
 
             // 每台设备各一块独立扩展屏（Parsec VDD）；驱动不可用时自动退回共享模式。
             // 必须在 server.Start() 之前建好：清理上次残留的虚拟屏要几秒，
@@ -182,7 +150,7 @@ public sealed class AppHost
             _usb = usb;
             usb.Start();
 
-            LogEndpoints(cfg, logger);
+            PipelineFactory.LogEndpoints(cfg, logger);
             server.EnableLocalShutdown(() =>
             {
                 logger.Info("收到本机 /shutdown，正在停止...");
@@ -200,6 +168,9 @@ public sealed class AppHost
         finally
         {
             _running = false;
+            // 退订进程级异常处理器，避免反复启停累积订阅
+            AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
+            TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
             try { _usb?.Stop(); } catch { }
             _usb = null;
             try { _clientScreens?.Dispose(); } catch { }
@@ -211,8 +182,23 @@ public sealed class AppHost
             try { inkPen?.Dispose(); } catch { }
             _server = null;
             _stats = null;
+            _runLogger = null;
             logger?.Info("已停止");
+            try { logger?.Dispose(); } catch { }
         }
+    }
+
+    /// <summary>进程级未处理异常兜底记录。</summary>
+    private void OnUnhandledException(object? sender, UnhandledExceptionEventArgs e)
+    {
+        try { _runLogger?.Error($"未处理异常，进程即将退出: {e.ExceptionObject}"); } catch { }
+    }
+
+    /// <summary>后台任务未处理异常兜底记录，标记为已观察避免进程崩溃。</summary>
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        try { _runLogger?.Warn($"后台任务未处理异常: {e.Exception?.GetBaseException().Message}"); } catch { }
+        e.SetObserved();
     }
 
     /// <summary>本机可用的访问地址（用于面板上"打开网页"和复制链接）。</summary>
@@ -235,28 +221,5 @@ public sealed class AppHost
         catch { }
         return list.Distinct().ToList();
     }
-
-    private static void LogEndpoints(ConfigModel cfg, Logger logger)
-    {
-        logger.Info($"网页客户端: http://localhost:{cfg.HttpPort}/");
-        foreach (var ip in LocalAddresses())
-            logger.Info($"            http://{ip}:{cfg.HttpPort}/  (WebSocket :{cfg.WsPort})");
-        logger.Info($"状态探针: http://localhost:{cfg.HttpPort}/status");
-    }
-
-    private static VideoTarget InitialTarget(ConfigModel cfg, ScreenRect rect)
-    {
-        // 宽高按同一系数缩放：超宽屏 / 竖屏直接压宽或压高会拉伸画面；上限 0 = 跟随显示器。
-        // 同时压进 H.264 Level 4.0（SPS 写的是 4.0）：超过 1920x1080 手机硬解直接失败，
-        // 客户端会在"建独立屏之前"先吃一口共享画面就报 H.264 解码失败
-        var capW = Math.Min(cfg.MaxWidth > 0 ? cfg.MaxWidth : rect.Width, 1920);
-        var capH = Math.Min(cfg.MaxHeight > 0 ? cfg.MaxHeight : rect.Height, 1080);
-        var fit = Math.Min(1.0, Math.Min((double)capW / rect.Width, (double)capH / rect.Height));
-        var w = Even(Math.Max(2, (int)Math.Round(rect.Width * fit)));
-        var h = Even(Math.Max(2, (int)Math.Round(rect.Height * fit)));
-        return new VideoTarget(w, h, cfg.BitRate);
-    }
-
-    private static int Even(int v) => v % 2 == 0 ? v : Math.Max(2, v - 1);
 }
 

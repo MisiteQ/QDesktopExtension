@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -33,7 +34,8 @@ public enum LinkMode
 public class ConfigModel
 {
     // ---------- 网络 ----------
-    public string Password { get; set; } = "123456";
+    /// <summary>访问口令。默认生成随机口令，避免弱默认口令导致局域网裸奔。</summary>
+    public string Password { get; set; } = GenerateRandomPassword();
     /// <summary>监听地址，"0.0.0.0" 表示局域网可访问。</summary>
     public string BindAddress { get; set; } = "0.0.0.0";
     /// <summary>WebSocket 端口：视频流 + 输入通道。</summary>
@@ -72,13 +74,6 @@ public class ConfigModel
     // ---------- 采集 ----------
     /// <summary>采集的显示器序号（从 0 开始），-1 = 所有显示器拼成的虚拟桌面。</summary>
     public int CaptureMonitor { get; set; } = 0;
-    /// <summary>
-    /// 采集某个窗口而不是整屏：窗口句柄（0 = 不启用）。
-    /// 句柄重启后会变，所以还要靠 <see cref="CaptureWindowTitle"/> 在启动时重新定位。
-    /// </summary>
-    public long CaptureWindow { get; set; }
-    /// <summary>上次选中的窗口标题，用于重启后按标题找回同一个窗口。</summary>
-    public string CaptureWindowTitle { get; set; } = "";
 
     // ---------- 虚拟扩展屏（软件合成，不需要虚拟显示器驱动） ----------
     /// <summary>虚拟画布尺寸，手机看到的就是这块屏。</summary>
@@ -132,8 +127,9 @@ public class ConfigModel
         ClientMaxBitRate = Math.Clamp(ClientMaxBitRate, 100_000, 60_000_000);
         WsPort = Math.Clamp(WsPort, 1, 65535);
         HttpPort = Math.Clamp(HttpPort, 1, 65535);
-        // 密码为空等于"局域网谁都能连"：这里兜一个默认值，防止手改配置后裸奔
-        if (string.IsNullOrEmpty(Password)) Password = "123456";
+        // 密码为空或仍是弱口令 123456，等于"局域网谁都能连"：换成随机口令，防止手改配置后裸奔
+        if (string.IsNullOrEmpty(Password) || Password == "123456")
+            Password = GenerateRandomPassword();
         // H.265 缺少 hvcC 描述符与对应封装，客户端无法解码，统一按 H.264 走
         if (Codec != CodecType.H264) Codec = CodecType.H264;
         AuthTimeoutMs = Math.Clamp(AuthTimeoutMs, 1000, 120_000);
@@ -201,7 +197,20 @@ public class ConfigModel
     public bool IsLoopbackOnly() =>
         BindAddress is "127.0.0.1" or "localhost" or "::1";
 
-    private static int Even(int v) => v % 2 == 0 ? v : v - 1;
+    private static int Even(int v) => v % 2 == 0 ? v : Math.Max(2, v - 1);
+
+    /// <summary>
+    /// 生成随机口令。只保留字母和数字，避免特殊字符在 URL / 命令行里被转义或截断。
+    /// 用 <see cref="RandomNumberGenerator"/> 保证密码学安全。
+    /// </summary>
+    public static string GenerateRandomPassword(int length = 8)
+    {
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        var sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++)
+            sb.Append(chars[RandomNumberGenerator.GetInt32(chars.Length)]);
+        return sb.ToString();
+    }
 
     public static ConfigModel LoadOrCreate(string path)
     {
@@ -252,7 +261,15 @@ public class ConfigModel
             try { Save(cfg2, path); } catch { }
             return cfg2;
         }
+        // 记录 Normalize 前的口令：弱口令(123456)/空口令会被换成随机口令，
+        // 这个新口令必须立刻写回磁盘。否则磁盘上仍是弱口令，用户照着 appconfig.json
+        // 输入会一直鉴权失败，而且每次重启都会再随机一次、密码永远对不上。
+        var pwdBefore = cfg.Password;
         cfg.Normalize();
+        if (!string.Equals(pwdBefore, cfg.Password, StringComparison.Ordinal))
+        {
+            try { Save(cfg, path); } catch { }
+        }
         return cfg;
     }
 

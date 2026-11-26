@@ -31,7 +31,7 @@ public sealed class ParsecVdd : IDisposable
         D4 = new byte[] { 0xa2, 0x6e, 0x02, 0x65, 0xcf, 0x50, 0xc8, 0xfa }
     };
 
-    private IntPtr _handle = new(-1);
+    private VddHandle? _handle;
     private Thread? _ping;
     private volatile bool _stop;
 
@@ -39,7 +39,7 @@ public sealed class ParsecVdd : IDisposable
     // 在使用中被销毁，表现为随机 0xc0000005（进程直接消失）。所有 IOCTL 都走这把锁。
     private readonly object _ioLock = new();
 
-    public bool IsOpen => _handle != new IntPtr(-1) && _handle != IntPtr.Zero;
+    public bool IsOpen => _handle != null && !_handle.IsClosed;
 
     /// <summary>打开驱动设备；失败返回 false（说明 Parsec VDD 驱动没装或不可用）。</summary>
     public bool Open()
@@ -48,7 +48,7 @@ public sealed class ParsecVdd : IDisposable
         {
             if (IsOpen) return true;
             var h = OpenDevice();
-            if (h == new IntPtr(-1) || h == IntPtr.Zero) return false;
+            if (h == null) return false;
             _handle = h;
             return true;
         }
@@ -147,11 +147,28 @@ public sealed class ParsecVdd : IDisposable
         }
         lock (_ioLock)
         {
-            if (_handle != new IntPtr(-1) && _handle != IntPtr.Zero)
-            {
-                try { CloseHandle(_handle); } catch { }
-                _handle = new IntPtr(-1);
-            }
+            // SafeHandle 负责关闭：异常路径下也不会泄漏，且引用计数保证调用途中不被提前释放
+            _handle?.Dispose();
+            _handle = null;
+        }
+    }
+
+    /// <summary>
+    /// 驱动句柄的 SafeHandle 封装：保证任何异常路径下句柄都能被关闭，
+    /// 避免手工 <see cref="CloseHandle"/> 在异常时泄漏或产生"使用已关闭句柄"的 UAF。
+    /// 作为参数传给 <see cref="DeviceIoControl"/> 时由 CLR 自动做引用计数，调用途中不会被提前关闭。
+    /// </summary>
+    private sealed class VddHandle : SafeHandle
+    {
+        public VddHandle() : base(IntPtr.Zero, true) { }
+        public VddHandle(IntPtr h) : base(h, true) { }
+
+        public override bool IsInvalid => handle == IntPtr.Zero;
+
+        protected override bool ReleaseHandle()
+        {
+            // 只对真实句柄调用 CloseHandle；无效句柄（Zero）直接返回成功
+            return handle == IntPtr.Zero || CloseHandle(handle);
         }
     }
 
@@ -187,12 +204,12 @@ public sealed class ParsecVdd : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool DeviceIoControl(IntPtr h, uint code, byte[] inBuf, uint inSize, out uint outBuf, uint outSize, IntPtr bytes, IntPtr overlapped);
+    private static extern bool DeviceIoControl(VddHandle h, uint code, byte[] inBuf, uint inSize, out uint outBuf, uint outSize, IntPtr bytes, IntPtr overlapped);
 
-    private static IntPtr OpenDevice()
+    private static VddHandle? OpenDevice()
     {
         var set = SetupDiGetClassDevs(ref AdapterGuid, IntPtr.Zero, IntPtr.Zero, 0x12); // PRESENT | DEVICEINTERFACE
-        if (set == IntPtr.Zero || set == new IntPtr(-1)) return new IntPtr(-1);
+        if (set == IntPtr.Zero || set == new IntPtr(-1)) return null;
         var d = new SpDevInterfaceData { cbSize = (uint)Marshal.SizeOf(typeof(SpDevInterfaceData)) };
         for (uint i = 0; SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref AdapterGuid, i, ref d); i++)
         {
@@ -213,13 +230,13 @@ public sealed class ParsecVdd : IDisposable
                 if (h != new IntPtr(-1) && h != IntPtr.Zero)
                 {
                     SetupDiDestroyDeviceInfoList(set);
-                    return h;
+                    return new VddHandle(h);
                 }
             }
             finally { Marshal.FreeHGlobal(buf); }
         }
         SetupDiDestroyDeviceInfoList(set);
-        return new IntPtr(-1);
+        return null;
     }
 
     private int Ioctl(uint code, byte[]? data)
@@ -230,7 +247,7 @@ public sealed class ParsecVdd : IDisposable
         // 所有 IOCTL 串行执行：并发 DeviceIoControl + CloseHandle 会让句柄在调用途中失效
         lock (_ioLock)
         {
-            if (_handle == new IntPtr(-1) || _handle == IntPtr.Zero) return -1;
+            if (_handle == null || _handle.IsClosed) return -1;
             if (!DeviceIoControl(_handle, code, inBuf, 32, out outVal, 4, IntPtr.Zero, IntPtr.Zero)) return -1;
         }
         return (int)outVal;

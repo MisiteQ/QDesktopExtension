@@ -49,7 +49,7 @@ internal static class Program
                 ConfigModel stCfg;
                 try { stCfg = ConfigModel.LoadOrCreate(cfgPath); }
                 catch (Exception ex) { Console.Error.WriteLine($"读取配置失败: {ex.Message}"); return 1; }
-                var logger = new Logger(stCfg);
+                var logger = new Logger(stCfg, toConsole: true);
                 return SelfTest.Run(stCfg, logger, args);
             }
 
@@ -145,74 +145,29 @@ internal static class Program
             return 1;
         }
 
-        var logger = new Logger(cfg);
+        var logger = new Logger(cfg, toConsole: true);
         logger.Info("QDesktopExtension 启动（控制台模式）");
         logger.Info($"配置文件: {cfgPath}");
 
         var monitors = DisplayCapture.GetMonitors();
         logger.Info($"检测到 {monitors.Count} 个显示器: {string.Join(" | ", monitors)}");
 
-        var source = CaptureSource.FromConfig(cfg);
-        var virtualScreen = source.Virtual ? VirtualScreen.Build(cfg, logger) : null;
-        var rect = virtualScreen?.Rect ?? source.Rect;
-        logger.Info($"采集源: {source.Describe()} 区域 {rect}");
-
-        var stats = new StreamStats();
-        var acl = new AccessControl(cfg);
-        var traffic = new TrafficStat();
-        var inkPen = new InkPen(cfg);
-        if (cfg.EnableWindowsInk)
-        {
-            logger.Info(inkPen.Available
-                ? "笔压注入已启用（InjectSyntheticPointerInput）"
-                : "笔压注入不可用，自动回退为鼠标注入");
-        }
-
-        var touch = new TouchForwarder(cfg, inkPen, rect);
-        TouchForwarder.DebugLog = logger;
-        if (virtualScreen != null) touch.SetVirtualScreen(virtualScreen);
-
-        DisplayCapture capture;
+        PipelineBundle bundle;
         try
         {
-            capture = source.CreateCapture(virtualScreen);
+            bundle = PipelineFactory.BuildPipeline(cfg, logger);
         }
         catch (Exception ex)
         {
-            logger.Error($"初始化采集失败: {ex.Message}");
+            // 采集/编码初始化失败（工厂内部已清理资源），按初始化失败返回
+            logger.Error($"初始化管线失败: {ex.Message}");
+            logger.Dispose();
             return 2;
         }
 
-        var encoder = new VideoEncoder(cfg);
-        var server = new StreamServer(cfg, logger, acl, traffic, touch, stats);
-
-        var target = InitialTarget(cfg, rect);
-        try
-        {
-            encoder.Init(target.Width, target.Height, capture.Width, capture.Height, cfg.Fps, target.BitRate);
-        }
-        catch (Exception ex)
-        {
-            logger.Error($"初始化编码器失败: {ex.Message}");
-            logger.Error("请把 FFmpeg 动态库（avcodec-62 / avformat-62 / avutil-60 / swscale-9 等）放到程序目录的 ffmpeg 子目录下。");
-            capture.Dispose();
-            server.Dispose();
-            return 3;
-        }
-
-        server.UpdateVideoInfo(encoder);
-        server.CurrentMonitor = source.IsWindow ? -2 : source.Virtual ? -3 : source.MonitorIndex;
-        server.CurrentSource = source;
-        server.VirtualWindowCount = cfg.VirtualWindows.Count;
-
-        var adaptive = new AdaptiveController(cfg, logger, capture.Width, capture.Height, target.BitRate);
-        var pipeline = new StreamPipeline(cfg, logger, capture, encoder, adaptive, new ServerPipelineHost(server), stats, touch,
-                                          source, virtualScreen);
-        server.MonitorRequest = pipeline.RequestMonitor;
-        server.SourceRequest = pipeline.RequestSource;
-        server.VirtualAddRequest = (h, t) => pipeline.AddVirtualWindow(h, t);
-        server.VirtualClearRequest = pipeline.ClearVirtualWindows;
-        server.ViewportRequest = pipeline.OnClientViewport;
+        var server = bundle.Server;
+        var pipeline = bundle.Pipeline;
+        var inkPen = bundle.InkPen;
 
         try
         {
@@ -221,12 +176,16 @@ internal static class Program
         catch (Exception ex)
         {
             logger.Error($"服务启动失败: {ex.Message}");
-            encoder.Dispose();
-            capture.Dispose();
+            try { pipeline.Dispose(); } catch { }
+            try { server.Dispose(); } catch { }
+            try { bundle.Encoder.Dispose(); } catch { }
+            try { bundle.Capture.Dispose(); } catch { }
+            try { inkPen.Dispose(); } catch { }
+            logger.Dispose();
             return 4;
         }
 
-        PrintEndpoints(cfg, logger);
+        PipelineFactory.LogEndpoints(cfg, logger);
 
         using var cts = new CancellationTokenSource();
         ClientScreenManager? clientScreens = null;
@@ -257,61 +216,17 @@ internal static class Program
         finally
         {
             try { clientScreens?.Dispose(); } catch { }
-            pipeline.Dispose();
-            server.Dispose();
-            encoder.Dispose();
-            capture.Dispose();
-            inkPen.Dispose();
+            try { pipeline.Dispose(); } catch { }
+            try { server.Dispose(); } catch { }
+            try { bundle.Encoder.Dispose(); } catch { }
+            try { bundle.Capture.Dispose(); } catch { }
+            try { inkPen.Dispose(); } catch { }
             try { timeEndPeriod(1); } catch { }
             logger.Info("已退出");
+            logger.Dispose();
         }
 
         return 0;
-    }
-
-    private static VideoTarget InitialTarget(ConfigModel cfg, ScreenRect rect)
-    {
-        // 宽高按同一系数缩放：超宽屏 / 竖屏直接压宽或压高会拉伸画面；上限 0 = 跟随显示器。
-        // 同时压进 H.264 Level 4.0（SPS 里写的就是 4.0）：超过 1920x1080 是非法的
-        var capW = Math.Min(cfg.MaxWidth > 0 ? cfg.MaxWidth : rect.Width, 1920);
-        var capH = Math.Min(cfg.MaxHeight > 0 ? cfg.MaxHeight : rect.Height, 1080);
-        var fit = Math.Min(1.0, Math.Min((double)capW / rect.Width, (double)capH / rect.Height));
-        var w = Even(Math.Max(2, (int)Math.Round(rect.Width * fit)));
-        var h = Even(Math.Max(2, (int)Math.Round(rect.Height * fit)));
-        return new VideoTarget(w, h, cfg.BitRate);
-    }
-
-    private static int Even(int v) => v % 2 == 0 ? v : Math.Max(2, v - 1);
-
-    private static void PrintEndpoints(ConfigModel cfg, Logger logger)
-    {
-        var addresses = new List<string>();
-        try
-        {
-            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (ni.OperationalStatus != OperationalStatus.Up) continue;
-                if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-                foreach (var addr in ni.GetIPProperties().UnicastAddresses)
-                {
-                    if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                    {
-                        addresses.Add(addr.Address.ToString());
-                    }
-                }
-            }
-        }
-        catch
-        {
-        }
-
-        logger.Info($"网页客户端: http://localhost:{cfg.HttpPort}/");
-        foreach (var ip in addresses.Distinct())
-        {
-            logger.Info($"            http://{ip}:{cfg.HttpPort}/  (WebSocket :{cfg.WsPort})");
-        }
-        logger.Info($"状态探针: http://localhost:{cfg.HttpPort}/status");
-        logger.Info($"本机停机: curl \"http://localhost:{cfg.HttpPort}/shutdown?token=<密码>\"");
     }
 
     private static void PrintUsage()

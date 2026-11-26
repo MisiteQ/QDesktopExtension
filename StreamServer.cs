@@ -68,6 +68,20 @@ public sealed class StreamServer : IDisposable
     private int _mseGeneration;         // MSE 客户端接入代次，供管线判断是否需要重开封装器
     private bool _keyFrameRequested = true;
 
+    // 热路径复用缓冲：BroadcastFrame/BroadcastFmp4 在编码管线线程，BroadcastJpeg 在 JPEG 线程，
+    // 各自独占一个缓冲与目标列表，避免每帧分配。仅各自线程访问，无需加锁。
+    private byte[]? _encPacket;
+    private byte[]? _jpegPacket;
+    private List<(IWebSocketConnection conn, string ip)>? _encTargets;
+    private List<(IWebSocketConnection conn, string ip)>? _jpegTargets;
+
+    /// <summary>复用缓冲：容量不足时扩容，否则复用现有数组，避免每帧分配。</summary>
+    private static byte[] EnsureBuffer(ref byte[]? buf, int len)
+    {
+        if (buf == null || buf.Length < len) buf = new byte[len];
+        return buf;
+    }
+
     public StreamServer(ConfigModel cfg, Logger logger, AccessControl acl, TrafficStat traffic,
                         TouchForwarder touch, StreamStats stats)
     {
@@ -623,7 +637,8 @@ public sealed class StreamServer : IDisposable
 
     /// <summary>编码器重建后同步给客户端（分辨率/描述符可能变了）。</summary>
     public void UpdateVideoInfo(VideoEncoder encoder)
-    {        string codec = encoder.CodecString();
+    {
+        string codec = encoder.CodecString();
         var desc = encoder.Extradata;
         var descBase64 = desc != null ? Convert.ToBase64String(desc) : "";
         int w = encoder.Width, h = encoder.Height;
@@ -723,16 +738,19 @@ public sealed class StreamServer : IDisposable
     /// <summary>把一帧编码数据发给所有已鉴权客户端；首字节标记是否关键帧。</summary>
     public void BroadcastFrame(byte[] data, bool keyFrame)
     {
-        var packet = new byte[data.Length + 1];
+        // 复用编码管线线程的发送缓冲，避免每帧分配
+        var packet = EnsureBuffer(ref _encPacket, data.Length + 1);
         packet[0] = keyFrame ? (byte)1 : (byte)0;
         Buffer.BlockCopy(data, 0, packet, 1, data.Length);
 
         if (keyFrame)
         {
-            lock (_videoLock) _lastKeyPacket = packet;
+            // 复用缓冲会被下一帧覆盖，关键帧要独立存一份供新客户端补发
+            lock (_videoLock) _lastKeyPacket = (byte[])packet.Clone();
         }
 
-        List<(IWebSocketConnection conn, string ip)> targets = new();
+        var targets = _encTargets ??= new List<(IWebSocketConnection conn, string ip)>();
+        targets.Clear();
         lock (_lock)
         {
             foreach (var kv in _clients)
@@ -829,11 +847,13 @@ public sealed class StreamServer : IDisposable
     /// <summary>推一段 fMP4 分片：首字节 3 作为类型标记。</summary>
     public void BroadcastFmp4(byte[] fragment)
     {
-        var packet = new byte[fragment.Length + 1];
+        // 复用编码管线线程的发送缓冲，避免每帧分配
+        var packet = EnsureBuffer(ref _encPacket, fragment.Length + 1);
         packet[0] = 3;
         Buffer.BlockCopy(fragment, 0, packet, 1, fragment.Length);
 
-        List<(IWebSocketConnection conn, string ip)> targets = new();
+        var targets = _encTargets ??= new List<(IWebSocketConnection conn, string ip)>();
+        targets.Clear();
         lock (_lock)
         {
             foreach (var kv in _clients)
@@ -862,11 +882,13 @@ public sealed class StreamServer : IDisposable
     /// <summary>推一帧 JPEG：首字节 2 作为类型标记，其余是完整 JPEG 数据。</summary>
     public void BroadcastJpeg(byte[] jpeg)
     {
-        var packet = new byte[jpeg.Length + 1];
+        // 复用 JPEG 线程的发送缓冲，避免每帧分配
+        var packet = EnsureBuffer(ref _jpegPacket, jpeg.Length + 1);
         packet[0] = 2;
         Buffer.BlockCopy(jpeg, 0, packet, 1, jpeg.Length);
 
-        List<(IWebSocketConnection conn, string ip)> targets = new();
+        var targets = _jpegTargets ??= new List<(IWebSocketConnection conn, string ip)>();
+        targets.Clear();
         lock (_lock)
         {
             foreach (var kv in _clients)
@@ -1057,7 +1079,7 @@ public sealed class StreamServer : IDisposable
         if (monitors.Count > 1)
         {
             var v = DisplayCapture.GetVirtualScreen();
-            if (monitors.Count > 0) sb.Append(',');   // 少了这一个逗号整个 /status 就不是合法 JSON 了
+            sb.Append(',');   // 少了这一个逗号整个 /status 就不是合法 JSON 了
             sb.Append($"{{\"index\":-1,\"x\":{v.X},\"y\":{v.Y},\"w\":{v.Width},\"h\":{v.Height}}}");
         }
         sb.Append(']');

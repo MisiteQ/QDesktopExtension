@@ -23,14 +23,32 @@ function Write-Result([string]$text, [int]$code) {
 try {
     # 1) 把分辨率写进驱动配置（驱动只在设备重载时读这个文件）
     if (Test-Path -LiteralPath $xmlPath) {
-        $txt = Get-Content -LiteralPath $xmlPath -Raw
-        if ($txt -match "<width>$Width</width>\s*<height>$Height</height>") {
+        $doc = New-Object System.Xml.XmlDocument
+        $doc.PreserveWhitespace = $true
+        $doc.Load($xmlPath)
+        $resolutions = $doc.vdd_settings.resolutions
+        $exists = $false
+        if ($resolutions -and $resolutions.resolution) {
+            foreach ($r in $resolutions.resolution) {
+                if ([int]$r.width -eq $Width -and [int]$r.height -eq $Height) {
+                    $exists = $true
+                    break
+                }
+            }
+        }
+        if ($exists) {
             Write-Host "模式 $Width x $Height 已存在"
         }
         else {
-            $entry = "        <resolution>`r`n            <width>$Width</width>`r`n            <height>$Height</height>`r`n            <refresh_rate>$Refresh</refresh_rate>`r`n        </resolution>`r`n"
-            $txt = $txt -replace '(<resolutions>)', "`$1`r`n$entry"
-            [IO.File]::WriteAllText($xmlPath, $txt, (New-Object Text.UTF8Encoding $false))
+            $newRes = $doc.CreateElement('resolution')
+            $wEl = $doc.CreateElement('width'); $wEl.InnerText = "$Width"
+            $hEl = $doc.CreateElement('height'); $hEl.InnerText = "$Height"
+            $rfEl = $doc.CreateElement('refresh_rate'); $rfEl.InnerText = "$Refresh"
+            $newRes.AppendChild($wEl)
+            $newRes.AppendChild($hEl)
+            $newRes.AppendChild($rfEl)
+            $resolutions.AppendChild($newRes)
+            $doc.Save($xmlPath)
             Write-Host "已把 $Width x $Height 写入驱动配置"
         }
     }

@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1          # 装到 %LOCALA
 
 1. 双击桌面图标启动，服务会**自动开始串流**，面板里显示访问地址；
 2. 手机 / 平板 / 另一台电脑的浏览器打开 `http://<本机局域网IP>:8767`；
-3. 输入访问密码（默认 `123456`，**请立刻修改**）；
+3. 输入访问密码（首次启动自动生成随机口令，在「连接访问」页可查看 / 修改）；
 4. 连上后画面上会出现状态仪表与控制按钮，右下角按钮可展开方向、铺满、全屏等开关。
 
 > 面板「连接访问」页可以切换「局域网地址 / USB 数据线 / 两种都允许」。USB 方式需手机开启 USB 调试并授权本机，
@@ -90,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1          # 装到 %LOCALA
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `Password` | `123456` | 访问密码，同时是 `/status`、`/shutdown` 的 token |
+| `Password` | 随机生成 | 访问密码，同时是 `/status`、`/shutdown` 的 token |
 | `BindAddress` | `0.0.0.0` | 监听地址；改成 `127.0.0.1` 即只允许本机 |
 | `HttpPort` / `WsPort` | `8767` / `8765` | 网页端口 / WebSocket 推流端口 |
 | `Fps` / `BitRate` | `30` / `8000000` | 共享流帧率与码率（bps） |
@@ -154,7 +154,7 @@ docs/                        开发文档（设计、审查、验证记录）与
 
 ## 安全须知
 
-- 默认 `123456` + `0.0.0.0` + 允许远程输入，等于**同网段任何人都能操作这台电脑**。请先改强密码；
+- 默认监听 `0.0.0.0` + 允许远程输入，等于**同网段任何人都能操作这台电脑**。访问口令虽为随机生成，仍请改成自己的强密码并妥善保管；
   不需要局域网接入时把监听地址改成 `127.0.0.1`，或勾选「只允许本机访问」。
 - 传输是明文 `ws://` / `http://`，不要在公共网络直接开放；需要外网访问请走 VPN / SSH 隧道。
 - `/status` 已要求访问密码（本机回环放行），`/windows` 等接口仍以密码作为 token。
@@ -168,6 +168,24 @@ dotnet publish -c Release  # 单文件自包含发布
 
 > 若系统 PATH 上的 `dotnet` 只有运行时，请把 `%LOCALAPPDATA%\Microsoft\dotnet` 前置到 PATH，
 > `build-release.ps1` 会自动在当前用户目录找 SDK。
+
+## 历史版本
+
+### v1.1.0（2026-11-20）
+
+全量代码审查与修复版本，聚焦稳定性、安全性与可维护性：
+
+- **安全默认姿态**：访问口令改为**随机生成**（新建配置、弱口令 `123456`、面板空密码均自动替换），不再使用固定默认密码；README 同步更新口令相关说明。
+- **异常与句柄安全**：`AppHost` 异常处理器改为具名方法并在退出时退订，消除重复启停的订阅累积；`ParsecVdd.OpenDevice` 改用 `SafeHandle` 封装驱动句柄，异常路径下自动关闭，防泄漏与 UAF。
+- **热路径性能**：`StreamServer` / `ClientPipelineHost` / `VideoEncoder` 的帧包、目标列表、编码输出缓冲改为复用（扩容式 `EnsureBuffer`），减少每帧分配；关键帧 `Clone` 独立存储避免被覆盖；`Fmp4Muxer.TakePending` 空返回改用 `Array.Empty<byte>()`。
+- **日志**：`Logger` 重写为常驻 `FileStream` + 锁 + `IDisposable`，替代每条日志开关文件流；控制台输出仅控制台模式。
+- **结构优化**：抽取 `PipelineFactory.BuildPipeline` 供控制台与托盘两种入口复用；`MainForm` 按页签拆分为多个 partial 文件，降低单文件复杂度。
+- **脚本修复**：`pack.ps1` 硬编码路径改相对定位；`install.ps1` 的 `DisplayVersion` 从程序集版本读取，不再硬编码；`vdd-addmode.ps1` 正则改 XML DOM 解析，安全写入驱动配置。
+- **清理**：移除废弃的 `CaptureWindow` 字段；删除 `driver\VDD.Control` 空壳目录。
+
+### v1.0.0
+
+初始版本：屏幕串流 + 反向输入控制。支持 GDI 抓屏、FFmpeg H.264 编码、WebSocket 传输、浏览器 WebCodecs / MSE / JPEG 多通道解码、Parsec VDD 多客户端独立虚拟扩展屏、反向输入注入、自适应码率、JSON 鉴权与访问控制。
 
 ## 许可与致谢
 

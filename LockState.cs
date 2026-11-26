@@ -43,6 +43,7 @@ internal static class LockState
         IntPtr desktop = IntPtr.Zero;
         try
         {
+            // 检查 OpenInputDesktop 的返回句柄：失败（锁屏/安全桌面/显示器关闭）时返回 NULL
             desktop = OpenInputDesktop(0, false, 0x0100 /* DESKTOP_SWITCHDESKTOP */);
             return desktop == IntPtr.Zero;
         }
