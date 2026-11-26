@@ -171,21 +171,11 @@ dotnet publish -c Release  # 单文件自包含发布
 
 ## 历史版本
 
-### v1.1.0（2026-11-20）
-
-全量代码审查与修复版本，聚焦稳定性、安全性与可维护性：
-
-- **安全默认姿态**：访问口令改为**随机生成**（新建配置、弱口令 `123456`、面板空密码均自动替换），不再使用固定默认密码；README 同步更新口令相关说明。
-- **异常与句柄安全**：`AppHost` 异常处理器改为具名方法并在退出时退订，消除重复启停的订阅累积；`ParsecVdd.OpenDevice` 改用 `SafeHandle` 封装驱动句柄，异常路径下自动关闭，防泄漏与 UAF。
-- **热路径性能**：`StreamServer` / `ClientPipelineHost` / `VideoEncoder` 的帧包、目标列表、编码输出缓冲改为复用（扩容式 `EnsureBuffer`），减少每帧分配；关键帧 `Clone` 独立存储避免被覆盖；`Fmp4Muxer.TakePending` 空返回改用 `Array.Empty<byte>()`。
-- **日志**：`Logger` 重写为常驻 `FileStream` + 锁 + `IDisposable`，替代每条日志开关文件流；控制台输出仅控制台模式。
-- **结构优化**：抽取 `PipelineFactory.BuildPipeline` 供控制台与托盘两种入口复用；`MainForm` 按页签拆分为多个 partial 文件，降低单文件复杂度。
-- **脚本修复**：`pack.ps1` 硬编码路径改相对定位；`install.ps1` 的 `DisplayVersion` 从程序集版本读取，不再硬编码；`vdd-addmode.ps1` 正则改 XML DOM 解析，安全写入驱动配置。
-- **清理**：移除废弃的 `CaptureWindow` 字段；删除 `driver\VDD.Control` 空壳目录。
-
-### v1.0.0
-
-初始版本：屏幕串流 + 反向输入控制。支持 GDI 抓屏、FFmpeg H.264 编码、WebSocket 传输、浏览器 WebCodecs / MSE / JPEG 多通道解码、Parsec VDD 多客户端独立虚拟扩展屏、反向输入注入、自适应码率、JSON 鉴权与访问控制。
+| 版本 | 日期 | 主要变更 |
+| --- | --- | --- |
+| **v1.1.1** | 2026-11-26 | 安全强化：访问口令随机生成，ParsecVdd 改用 SafeHandle；性能优化：帧包缓冲复用减少 GC；结构重构：`PipelineFactory` 统一管线组装、`MainForm` 拆 partial；前端新增画面缩放按钮；脚本版本号自动读取 |
+| **v1.1.0** | 2026-11-20 | 全量代码审查与修复：异常处理器退订防累积、Fmp4Muxer 空返回改 `Array.Empty<byte>()`、Logger 重写为常驻 FileStream、vdd-addmode 正则改 XML DOM 解析 |
+| **v1.0.0** | — | 初始版本：GDI 抓屏、FFmpeg H.264 编码、WebSocket 传输、WebCodecs/MSE/JPEG 多通道解码、Parsec VDD 独立虚拟扩展屏、反向输入注入、自适应码率、JSON 鉴权 |
 
 ## 许可与致谢
 
