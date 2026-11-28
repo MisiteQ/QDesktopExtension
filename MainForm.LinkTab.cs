@@ -11,7 +11,7 @@ public sealed partial class MainForm
         var page = NewPage("连接访问");
         var layout = PageGrid(page);
 
-        var connection = AddCard(layout, 218, "连接方式");
+        var connection = AddCard(layout, 198, "连接方式");
         var modes = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -62,7 +62,7 @@ public sealed partial class MainForm
         };
         AddRow(connection, "", _btnUsbRefresh, 36);
 
-        var security = AddCard(layout, 260, "访问安全");
+        var security = AddCard(layout, 240, "访问安全");
         AddRow(security, "网页端口", _numHttpPort, 40);
         AddRow(security, "推流端口", _numWsPort, 40);
         AddRow(security, "访问密码", _txtPassword, 40);

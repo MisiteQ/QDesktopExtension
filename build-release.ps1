@@ -26,7 +26,7 @@ function Find-Dotnet {
 
 $dotnet = Find-Dotnet
 Write-Host "[1/4] dotnet publish -c Release" -ForegroundColor Cyan
-& $dotnet publish -c Release --nologo
+& $dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true --nologo
 if ($LASTEXITCODE -ne 0) { throw "publish 失败，退出码 $LASTEXITCODE" }
 
 $publish = Join-Path $root 'bin\Release\net8.0-windows10.0.19041.0\win-x64\publish'

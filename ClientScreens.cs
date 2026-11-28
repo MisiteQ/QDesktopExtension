@@ -23,6 +23,15 @@ public sealed class ClientScreenManager : IDisposable
     private System.Threading.Timer? _orphanTimer;
     // 最近一次插屏失败的时刻（用于全局冷场，避免连接风暴里反复折腾显示栈）
     private long _lastAddFailTicks;
+    // 已经切到驱动、但 Windows 还没接进桌面的槽位。
+    // 不要"撤回再插"：每拔一次显示栈就重建一次（用户看到的就是屏幕一直闪），
+    // 保留该屏等拓扑扩展把它接进来，接入后继续用它。
+    private int _pendingSlot = -1;
+    private long _pendingSince;
+    private HashSet<string> _pendingBefore = new();
+    // 这条连接的建屏重试已经用完（面板据此说明"已退回共享画面"）。
+    // 只影响当前这一轮：新设备接入会复位，不会出现"重启服务才能再试"的死状态。
+    private volatile bool _attachFailed;
 
     /// <summary>插屏 / 拔屏之后给系统显示栈留出的稳定时间（毫秒）。</summary>
     private const int ScreenSettleMs = 400;
@@ -30,14 +39,18 @@ public sealed class ClientScreenManager : IDisposable
     /// <summary>
     /// 客户端断开后保留它那块屏的时长（毫秒）。手机 USB / 网络闪断后往往 1 秒内就重连，
     /// 立刻拔屏再插屏会让系统显示栈高频重建——这正是进程崩溃的触发场景。
-    /// 实测 Parsec VDD 0.45 在本机上执行过 REMOVE 之后，同进程内 AddDisplay 会"假成功"
-    /// （返回槽位但系统再也不枚举显示器），所以这里不轻易拔屏。
     /// 孤儿屏闲置超过这个时长（10 分钟）才真正拔掉；期间一直留着给设备重连用。
     /// </summary>
     private const int OrphanEvictMs = 10 * 60_000;
 
     /// <summary>插屏失败后的全局冷场时间：这段时间内不再折腾显示栈，避免把驱动越弄越坏。</summary>
     private const int AddFailCooldownMs = 10_000;
+
+    /// <summary>
+    /// 插进驱动后最多等系统枚举多久（毫秒）。等不到保留这块屏继续等，不撤回。
+    /// 本机实测偶发要十几秒；超过这个时长基本就是驱动卡住了，撤回一次把槽位让出来。
+    /// </summary>
+    private const int PendingScreenGiveUpMs = 180_000;
 
     private sealed class Session
     {
@@ -48,6 +61,7 @@ public sealed class ClientScreenManager : IDisposable
         public TouchForwarder? Touch;
         public VideoEncoder? Encoder;
         public StreamPipeline? Pipeline;
+        public StreamStats? Stats;   // 这块屏自己的统计（面板汇总"真实推流帧率/码率"用）
         public ClientPipelineHost? Host;
         public CancellationTokenSource? Stop;
         public Thread? Runner;
@@ -116,8 +130,53 @@ public sealed class ClientScreenManager : IDisposable
     /// <summary>当前有几块"属于客户端"的屏。</summary>
     public int ScreenCount => _sessions.Count + _orphans.Count;
 
+    /// <summary>是否已经插了屏、正在等 Windows 识别（面板展示用）。</summary>
+    public bool ScreenPending
+    {
+        get { lock (this) return _pendingSlot >= 0; }
+    }
+
+    /// <summary>已经等了多少秒（面板展示用）。</summary>
+    public int PendingWaitSeconds
+    {
+        get
+        {
+            long since;
+            lock (this) since = _pendingSince;
+            return since == 0 ? 0 : (int)((Environment.TickCount64 - since) / 1000);
+        }
+    }
+
+    /// <summary>
+    /// 这一轮重试已经用完（面板据此说明"已退回共享画面"，
+    /// 而不是一直显示"正在准备扩展屏"误导用户）。新设备接入会复位。
+    /// </summary>
+    public bool ScreenGiveUp => _attachFailed;
+
     /// <summary>一块独立扩展屏的快照（面板展示用）。</summary>
     public sealed record ClientScreenInfo(string Device, string Ip, bool Orphan, string Size);
+
+    /// <summary>
+    /// 所有"独立扩展屏"当前的真实推流帧率 / 码率之和。
+    /// 面板顶部原来只显示共享管线的统计：客户端一旦拿到自己的屏，共享管线就停了，
+    /// 于是顶部一直显示 0 fps，看起来像"根本没连上"。这里把各块屏的统计汇总给面板。
+    /// </summary>
+    public (int Fps, int Kbps) ActiveFrameStats
+    {
+        get
+        {
+            var fps = 0;
+            var kbps = 0;
+            foreach (var s in _sessions.Values)
+            {
+                var st = s.Stats;
+                if (st == null) continue;
+                fps += st.Fps;
+                kbps += st.Kbps;
+            }
+            return (fps, kbps);
+        }
+    }
 
     /// <summary>列出当前所有独立扩展屏（在用的 + 断线等待重连的），面板刷新时调用。</summary>
     public List<ClientScreenInfo> SnapshotScreens()
@@ -147,6 +206,8 @@ public sealed class ClientScreenManager : IDisposable
 
     private void OnAuthed(IWebSocketConnection conn)
     {
+        // 新设备接入就重新给机会：上一轮失败不应该让本次运行永久放弃
+        _attachFailed = false;
         // 建屏要 1~3 秒：鉴权一通过就接管这条连接，别让共享画面（物理屏）再推给它
         _server.SetOwnPipeline(conn, true);
         // 建屏要轮询设备枚举，不能占着 WebSocket 线程
@@ -169,14 +230,21 @@ public sealed class ClientScreenManager : IDisposable
             try { ok = Attach(conn); }
             catch (Exception ex) { _logger.Warn($"建屏异常（第 {attempt + 1} 次）：{ex.Message}"); }
 
-            if (ok || !conn.IsAvailable || _token.IsCancellationRequested) return;
+            if (ok)
+            {
+                _attachFailed = false;
+                return;
+            }
+            if (!conn.IsAvailable || _token.IsCancellationRequested) return;
 
             // 退回共享画面：至少先有画面，别让客户端空等
             try { _server.SetOwnPipeline(conn, false); } catch { }
 
-            if (attempt >= 6)
+            // 插屏后等系统识别可能要十几秒，这里给足重试机会；期间客户端一直看共享画面
+            if (attempt >= 17)
             {
-                _logger.Warn($"{ip} 独立扩展屏创建失败，本次连接保持共享画面");
+                _attachFailed = true;
+                _logger.Warn($"{ip} 独立扩展屏创建失败，本次连接保持共享画面（下次设备接入会重新尝试）");
                 return;
             }
             _logger.Info($"{ip} 独立扩展屏暂不可用，{AddFailCooldownMs / 1000} 秒后重试（第 {attempt + 1} 次）");
@@ -282,16 +350,21 @@ public sealed class ClientScreenManager : IDisposable
     /// <summary>清掉连接已断、又没有屏可接管的僵尸会话。</summary>
     private void CleanupDeadSessions()
     {
+        var closed = 0;
         foreach (var kv in _sessions.ToArray())
         {
             if (kv.Key.IsAvailable) continue;
             if (_sessions.TryRemove(kv.Key, out var s))
             {
                 CloseSession(s);
+                closed++;
                 _logger.Info($"回收僵尸会话的显示器 {s.DeviceName}");
             }
         }
-        SaveSlots();
+        if (closed > 0)
+        {
+            SaveSlots();
+        }
     }
 
     /// <summary>先停编码线程，再释放它正在访问的采集缓冲与 FFmpeg 原生对象。</summary>
@@ -334,6 +407,55 @@ public sealed class ClientScreenManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// 等系统把新显示器挂到桌面上（出现在 Screen.AllScreens 里）。
+    /// Parsec VDD 插出来的屏经常只到"设备已到达"这一层：Windows 认为它是"可用但未启用"的目标，
+    /// 这时显示设置里看不到、抓屏也抓不到，对它改分辨率一律失败。
+    /// 正确做法是把桌面拓扑扩展到它（等价 Win+P → 扩展），系统异步完成后屏才会出现。
+    /// </summary>
+    private Screen? WaitForScreen(HashSet<string> before, int timeoutMs, IWebSocketConnection conn)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        var nextTry = 0L;
+        var lastMsg = "";
+        var loggedDevices = false;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (_token.IsCancellationRequested || !conn.IsAvailable) return null;
+            var found = Screen.AllScreens.FirstOrDefault(x =>
+                !before.Contains(x.DeviceName) && VirtualDisplayMode.IsParsecAdapter(x.DeviceName));
+            if (found != null) return found;
+
+            var now = Environment.TickCount64;
+            if (now >= nextTry)
+            {
+                nextTry = now + 3000;
+                // 改显示拓扑必须和抓屏互斥（桌面表面重建时 BitBlt 会崩）
+                string dev, msg;
+                bool attached;
+                lock (DisplayCapture.ScreenGate) attached = ScreenArranger.AttachNewParsecScreen(before, 2500, out dev, out msg);
+                if (attached)
+                {
+                    _logger.Info($"[建屏] 虚拟屏 {dev} 已接入桌面（{msg}）");
+                    return Screen.AllScreens.FirstOrDefault(x => x.DeviceName == dev);
+                }
+                if (msg != lastMsg)
+                {
+                    _logger.Info($"[建屏] 等待 Windows 接入虚拟屏：{msg}");
+                    lastMsg = msg;
+                }
+                if (!loggedDevices)
+                {
+                    // 第一次没接上时把显示设备列出来，方便区分"驱动没建出设备"和"系统没启用"
+                    _logger.Info($"[建屏] 显示设备：{ScreenArranger.DescribeDisplayDevices()}");
+                    loggedDevices = true;
+                }
+            }
+            Thread.Sleep(100);
+        }
+        return null;
+    }
+
     private void OnViewport(IWebSocketConnection conn, int w, int h)
     {
         if (!_sessions.TryGetValue(conn, out var s)) return;   // 会话还没建：服务端已按连接记下尺寸
@@ -368,8 +490,7 @@ public sealed class ClientScreenManager : IDisposable
             if (TryInherit(conn, ip)) return true;
             CleanupDeadSessions();
 
-            // 刚插屏失败过：一段时间内别再折腾显示栈。实测反复"插了又拔"会把驱动搞成
-            // "AddDisplay 成功但系统永远不枚举"的状态，之后只能重启服务才恢复。
+            // 刚插屏失败过：一段时间内别再折腾显示栈，避免连接风暴里反复重建
             if (Environment.TickCount64 - _lastAddFailTicks < AddFailCooldownMs) return false;
 
             // 上限保护：虚拟屏上限统一取 ParsecVdd.MaxClientScreens；
@@ -385,37 +506,64 @@ public sealed class ClientScreenManager : IDisposable
 
             var before = new HashSet<string>(Screen.AllScreens.Select(x => x.DeviceName));
             int index;
-            // 插屏期间桌面表面正在重建，不能和抓屏线程撞车。
-            // 这里只试一次：失败直接交回调用方（它会让客户端立刻看共享画面，2 秒后再来），
-            // 绝不在这里长时间阻塞 —— 显示栈卡住时死等会连带把整条服务拖住。
-            lock (DisplayCapture.ScreenGate) index = _vdd.AddDisplay();
-            if (index < 0)
-            {
-                _lastAddFailTicks = Environment.TickCount64;
-                _logger.Warn($"给客户端插屏失败（AddDisplay 返回 {index}），先退回共享画面，{AddFailCooldownMs / 1000} 秒后再试");
-                return false;
-            }
-            _logger.Info($"[建屏] 已插屏，槽位 {index}，等待系统枚举显示设备");
-
-            // 等系统把新显示器枚举出来（实测重启显示栈后要 5~8 秒，500ms 太短会误判失败）；
-            // 这期间客户端可能已经断开，必须提前退出，
-            // 否则会继续用一条死连接建采集/编码，白白折腾几秒（也是崩溃的高发时段）
             Screen? added = null;
-            for (var i = 0; i < 30 && added == null; i++)
+
+            if (_pendingSlot >= 0)
             {
-                if (_token.IsCancellationRequested || !conn.IsAvailable) break;
-                added = Screen.AllScreens.FirstOrDefault(x => !before.Contains(x.DeviceName));
-                if (added == null) Thread.Sleep(100);
+                // 上次插的那块屏先看系统认出来没有：认出来就直接接着用，绝不重复插
+                added = Screen.AllScreens.FirstOrDefault(x =>
+                            !_pendingBefore.Contains(x.DeviceName) && VirtualDisplayMode.IsParsecAdapter(x.DeviceName))
+                        ?? WaitForScreen(_pendingBefore, 8000, conn);
+                if (added == null)
+                {
+                    var waited = Environment.TickCount64 - _pendingSince;
+                    if (waited < PendingScreenGiveUpMs)
+                    {
+                        _logger.Info($"{ip} 已插屏、等待系统识别新显示器（已等 {waited / 1000} 秒），先给共享画面");
+                        return false;
+                    }
+                    // 等太久基本不会出现了：只撤回这一次，把槽位让出来
+                    _logger.Warn($"槽位 {_pendingSlot} 插入 {PendingScreenGiveUpMs / 1000} 秒仍未被系统识别，撤回");
+                    lock (DisplayCapture.ScreenGate) _vdd.RemoveDisplay(_pendingSlot);
+                    lock (DisplayCapture.ScreenGate) Thread.Sleep(ScreenSettleMs);
+                    _pendingSlot = -1;
+                    _pendingBefore.Clear();
+                    return false;
+                }
+                index = _pendingSlot;
+                before = _pendingBefore;
+                _pendingSlot = -1;
+                _pendingBefore.Clear();
+                _logger.Info($"[建屏] 系统已识别新显示器 {added.DeviceName}，继续建独立扩展屏");
             }
-            if (added == null)
+            else
             {
-                _lastAddFailTicks = Environment.TickCount64;
-                _logger.Warn(conn.IsAvailable
-                    ? $"插屏后系统没有枚举出新显示器，撤回（驱动可能已经卡住，{AddFailCooldownMs / 1000} 秒内不再尝试）"
-                    : "建屏途中客户端已断开，撤回这块新显示器");
-                lock (DisplayCapture.ScreenGate) _vdd.RemoveDisplay(index);
-                lock (DisplayCapture.ScreenGate) Thread.Sleep(ScreenSettleMs);
-                return false;
+                // 插屏期间桌面表面正在重建，不能和抓屏线程撞车。
+                // 这里只试一次：失败直接交回调用方（它会让客户端立刻看共享画面，稍后再来），
+                // 绝不在这里长时间阻塞 —— 显示栈卡住时死等会连带把整条服务拖住。
+                lock (DisplayCapture.ScreenGate) index = _vdd.AddDisplay();
+                if (index < 0)
+                {
+                    _lastAddFailTicks = Environment.TickCount64;
+                    _logger.Warn($"给客户端插屏失败（AddDisplay 返回 {index}），先退回共享画面，{AddFailCooldownMs / 1000} 秒后再试");
+                    return false;
+                }
+                _logger.Info($"[建屏] 已插屏，槽位 {index}，等待系统枚举显示设备");
+                _pendingSlot = index;
+                _pendingSince = Environment.TickCount64;
+                _pendingBefore = before;
+
+                // 等系统枚举（实测偶发要十几秒）。这期间客户端可能断开，必须提前退出，
+                // 否则会继续用一条死连接建采集/编码（也是崩溃的高发时段）。
+                // 等不到也不算失败：保留这块屏，下次重试接着认领 —— 撤回再插才是闪屏和驱动卡死的根源
+                added = WaitForScreen(before, 20_000, conn);
+                if (added == null)
+                {
+                    _logger.Info($"[建屏] 槽位 {index} 插入后系统暂未枚举，保留该屏继续等待（不撤回）");
+                    return false;
+                }
+                _pendingSlot = -1;
+                _pendingBefore.Clear();
             }
 
             // 只摆这一块：放到现有桌面最右侧，别人的分辨率/位置/主屏标记都不动
@@ -470,10 +618,12 @@ public sealed class ClientScreenManager : IDisposable
                 // 鉴权时下发的是共享画面的尺寸，这块屏是另一个尺寸，得先告诉客户端
                 host.UpdateVideoInfo(encoder);
                 // 每块独立屏一套统计：共用全局那份会让"抓屏是否可用"被别的管线覆盖，画面来回闪
+                var screenStats = new StreamStats();
                 var pipeline = new StreamPipeline(_cfg, _logger, capture, encoder, adaptive,
-                                                  host, new StreamStats(), sessionTouch,
+                                                  host, screenStats, sessionTouch,
                                                   source, null);
                 session.Pipeline = pipeline;
+                session.Stats = screenStats;
                 session.Host = host;     // 重连时要把这条管线转交给新连接
 
                 // 手机连上来就报过屏幕尺寸，那时还没这块屏：现在补应用，保证 1:1 输出

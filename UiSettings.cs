@@ -11,6 +11,9 @@ public sealed class UiSettings
     /// <summary>ask = 每次询问，tray = 只关面板（服务继续），exit = 关窗就退出并停服务。</summary>
     public string CloseAction { get; set; } = "ask";
 
+    /// <summary>界面配色：dark = 深色控制台，light = 浅色。</summary>
+    public string Theme { get; set; } = "dark";
+
     private string _path = string.Empty;
 
     public static UiSettings Load(string path)
@@ -21,8 +24,12 @@ public sealed class UiSettings
             if (File.Exists(path))
             {
                 var loaded = JsonSerializer.Deserialize<UiSettings>(File.ReadAllText(path));
-                if (loaded != null && !string.IsNullOrWhiteSpace(loaded.CloseAction))
-                    s.CloseAction = Normalize(loaded.CloseAction);
+                if (loaded != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(loaded.CloseAction))
+                        s.CloseAction = Normalize(loaded.CloseAction);
+                    s.Theme = loaded.Theme == "light" ? "light" : "dark";
+                }
             }
         }
         catch

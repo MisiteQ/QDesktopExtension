@@ -30,15 +30,6 @@ public unsafe sealed class VideoEncoder : IDisposable
     private byte[]? _extradata;   // FFmpeg 原始 extradata（Annex B 的 SPS/PPS）
     private byte[]? _avcC;        // 转换后的 avcC，给 WebCodecs 当 description
     private string? _codecString;
-    // 编码输出中间缓冲复用：避免每帧 new byte[_pkt->size]。
-    // 消费（BroadcastFrame/FeedMuxer）都在编码线程同步完成，下一帧覆盖前已消费完，安全。
-    private byte[]? _rawBuf;
-
-    private static byte[] EnsureBuffer(ref byte[]? buf, int len)
-    {
-        if (buf == null || buf.Length < len) buf = new byte[len];
-        return buf;
-    }
 
     public VideoEncoder(ConfigModel cfg)
     {
@@ -294,9 +285,18 @@ public unsafe sealed class VideoEncoder : IDisposable
             if (r == ffmpeg.AVERROR(ffmpeg.EAGAIN) || r == ffmpeg.AVERROR_EOF) break;
             if (r < 0) break;
             var key = (_pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0;
-            // 复用中间缓冲，避免每帧分配
-            var raw = EnsureBuffer(ref _rawBuf, _pkt->size);
-            Marshal.Copy((IntPtr)_pkt->data, raw, 0, raw.Length);
+            // 必须按本包真实长度分配并拷贝：之前复用一块更大的缓冲再按 buffer.Length 拷贝，
+            // 会在 P 帧（远小于关键帧）时越过 packet 的 native 内存继续读——
+            // 这正是"Exception Processing Message 0xc0000005"崩溃的来源，
+            // 同时还会把垃圾字节混进码流导致客户端解码失败。
+            var packetSize = _pkt->size;
+            if (packetSize <= 0)
+            {
+                ffmpeg.av_packet_unref(_pkt);
+                continue;
+            }
+            var raw = new byte[packetSize];
+            Marshal.Copy((IntPtr)_pkt->data, raw, 0, packetSize);
             // WebCodecs 配了 avcC description 时要求 AVCC 长度前缀格式
             var bytes = _cfg.Codec == CodecType.H264 ? ToAvcc(raw) : raw;
             output.Add(new EncodedFrame(bytes, key));

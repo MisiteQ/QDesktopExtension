@@ -28,39 +28,39 @@ public sealed partial class MainForm : Form
     private readonly UiSettings _ui;
 
     // 顶部状态
-    private readonly Label _lblStatus = new() { AutoSize = true, Font = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold) };
+    private readonly Label _lblStatus = new() { AutoSize = true, Font = UiTheme.Body(9f, FontStyle.Bold) };
     private readonly UiButton _btnStart = new() { Text = "启动服务", AutoSize = false, Size = new Size(104, 34) };
     private readonly UiButton _btnStop = new() { Text = "停止服务", AutoSize = false, Size = new Size(104, 34) };
 
     // 访问地址
-    private readonly Label _lblUrl = new() { AutoSize = true, Font = UiTheme.Mono(11.5f, FontStyle.Bold) };
+    private readonly Label _lblUrl = new() { AutoSize = true, Font = UiTheme.Body(11f, FontStyle.Bold) };
     private readonly Label _lblStats = new() { AutoSize = true, ForeColor = UiTheme.Muted };
     private readonly UiButton _btnCopy = new() { Text = "复制", AutoSize = false, Size = new Size(64, 30) };
     private readonly UiButton _btnOpen = new() { Text = "打开网页", AutoSize = false, Size = new Size(96, 30) };
     private readonly UiButton _btnLogs = new() { Text = "日志", AutoSize = false, Size = new Size(64, 30) };
+    private readonly ComboBox _cmbTheme = new UiComboBox { Width = 110 };
 
     // 显示
-    private readonly RadioButton _rbCopy = new() { Text = "复制屏幕", AutoSize = true, Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold) };
-    private readonly RadioButton _rbLinkLan = new() { Text = "局域网地址", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
-    private readonly RadioButton _rbLinkUsb = new() { Text = "USB 数据线", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
-    private readonly RadioButton _rbLinkBoth = new() { Text = "两种都允许", AutoSize = true, Font = new Font("Microsoft YaHei UI", 9.5f) };
+    private readonly RadioButton _rbCopy = new() { Text = "复制屏幕", AutoSize = true, Font = UiTheme.Body(10f, FontStyle.Bold) };
+    private readonly RadioButton _rbLinkLan = new() { Text = "局域网地址", AutoSize = true, Font = UiTheme.Body(9.5f) };
+    private readonly RadioButton _rbLinkUsb = new() { Text = "USB 数据线", AutoSize = true, Font = UiTheme.Body(9.5f) };
+    private readonly RadioButton _rbLinkBoth = new() { Text = "两种都允许", AutoSize = true, Font = UiTheme.Body(9.5f) };
     private readonly Label _lblUsbStatus = new() { AutoSize = true, MaximumSize = new Size(700, 0) };
     private readonly UiButton _btnUsbRefresh = new() { Text = "重新检测 USB" };
-    private readonly RadioButton _rbExtend = new() { Text = "扩展屏", AutoSize = true, Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold) };
-    private readonly ComboBox _cmbSource = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 460 };
-    private readonly UiButton _btnVirtualCfg = new() { Text = "配置扩展屏…", AutoSize = true };
+    private readonly RadioButton _rbExtend = new() { Text = "扩展屏", AutoSize = true, Font = UiTheme.Body(10f, FontStyle.Bold) };
+    private readonly ComboBox _cmbSource = new UiComboBox { Width = 460 };
     private readonly Label _lblSourceHint = new() { AutoSize = true, MaximumSize = new Size(540, 0), ForeColor = UiTheme.Muted };
     private readonly Label _lblVdd = new() { AutoSize = false, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Font = UiTheme.Body(8.5f) };
     private readonly CheckBox _chkCursor = new() { Text = "把本机鼠标指针画进画面", AutoSize = true };
     private readonly CheckBox _chkInput = new() { Text = "允许在浏览器里用鼠标 / 触摸操作电脑", AutoSize = true };
 
     // 画质
-    private readonly ComboBox _cmbFps = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    private readonly ComboBox _cmbFps = new UiComboBox { Width = 140 };
     private readonly NumericUpDown _numBitrate = new() { Minimum = 1, Maximum = 50, DecimalPlaces = 1, Increment = 0.5m, Width = 140 };
-    private readonly ComboBox _cmbMaxRes = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+    private readonly ComboBox _cmbMaxRes = new UiComboBox { Width = 200 };
     private readonly CheckBox _chkAdaptive = new() { Text = "网络差时自动降码率 / 降分辨率", AutoSize = true };
-    private readonly ComboBox _cmbJpegFps = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
-    private readonly ComboBox _cmbJpegWidth = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    private readonly ComboBox _cmbJpegFps = new UiComboBox { Width = 140 };
+    private readonly ComboBox _cmbJpegWidth = new UiComboBox { Width = 140 };
 
     // 其他
     private readonly NumericUpDown _numHttpPort = new() { Minimum = 1, Maximum = 65535, Width = 140 };
@@ -68,8 +68,8 @@ public sealed partial class MainForm : Form
     private readonly TextBox _txtPassword = new() { Width = 200, UseSystemPasswordChar = false };
     private readonly CheckBox _chkLoopbackOnly = new() { Text = "只允许本机访问（默认允许局域网）", AutoSize = true };
     private readonly CheckBox _chkAutoStart = new() { Text = "开机自动启动（登录后在托盘串流）", AutoSize = true };
-    private readonly ComboBox _cmbCloseAction = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240 };
-    private readonly ComboBox _cmbLogLevel = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+    private readonly ComboBox _cmbCloseAction = new UiComboBox { Width = 240 };
+    private readonly ComboBox _cmbLogLevel = new UiComboBox { Width = 140 };
 
     private readonly UiButton _btnSave = new() { Text = "保存配置", AutoSize = false, Size = new Size(110, 36) };
     private readonly UiButton _btnSaveRestart = new() { Text = "保存并重启服务", AutoSize = false, Size = new Size(150, 36) };
@@ -90,6 +90,7 @@ public sealed partial class MainForm : Form
     {
         _host = host;
         _ui = UiSettings.Load(Path.Combine(AppContext.BaseDirectory, "uisettings.json"));
+        UiTheme.SetMode(_ui.Theme == "light" ? UiThemeMode.Light : UiThemeMode.Dark);
 
         Text = "QDesktopExtension";
         // 在设置尺寸与布局前启用 DPI 自动缩放和深色标题栏。
@@ -99,10 +100,15 @@ public sealed partial class MainForm : Form
         // 面板会被摆到那块屏上，用户在主屏上看不到窗口（实测过）
         StartPosition = FormStartPosition.Manual;
         var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
-        ClientSize = new Size(Math.Min(960, wa.Width - 60), Math.Min(740, wa.Height - 60));
+        // 按屏幕比例取初始尺寸：写死的 960×740 在高 DPI 屏上只是屏幕的一小块，
+        // 设置项会挤在一起、每页都要滚动，看起来就不像正经软件窗口。
+        var wantW = Math.Max(wa.Width * 62 / 100, Math.Min(960, wa.Width - 60));
+        var wantH = Math.Max(wa.Height * 78 / 100, Math.Min(740, wa.Height - 60));
+        ClientSize = new Size(Math.Min(wantW, wa.Width - 60), Math.Min(wantH, wa.Height - 60));
         MinimumSize = new Size(840, 620);
         Location = new Point(wa.X + Math.Max(0, (wa.Width - Width) / 2), wa.Y + Math.Max(0, (wa.Height - Height) / 2));
-        DoubleBuffered = false;
+        // 面板是多层 TableLayoutPanel + 自绘卡片，不双缓冲时每次刷新都会整片闪
+        DoubleBuffered = true;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
         _cmbFps.Items.AddRange(new object[] { "15 帧", "20 帧", "25 帧", "30 帧", "45 帧", "60 帧" });
@@ -111,9 +117,13 @@ public sealed partial class MainForm : Form
         _cmbJpegWidth.Items.AddRange(new object[] { "640 像素", "960 像素", "1280 像素", "1600 像素" });
         _cmbCloseAction.Items.AddRange(new object[] { "每次询问我", "只关闭面板（后台继续串流）", "退出程序并停止服务" });
         _cmbLogLevel.Items.AddRange(new object[] { "只记错误", "普通", "详细（排查问题用）" });
+        _cmbTheme.Items.AddRange(new object[] { "深色", "浅色" });
+        _cmbTheme.SelectedIndex = UiTheme.Mode == UiThemeMode.Light ? 1 : 0;
 
         StyleButtons();
         BuildLayout();
+        UiTheme.CaptureTheme(this);      // 记住每个控件的配色角色，切主题时按角色换色
+        UiTheme.EnableDoubleBuffering(this);
         LoadFromConfig(_host.Config);
         _chkAutoStart.Checked = IsAutoStart();
         SelectCloseAction(_ui.CloseAction);
@@ -128,6 +138,7 @@ public sealed partial class MainForm : Form
         _rbCopy.CheckedChanged += (_, _) => OnModeChanged(_rbCopy);
         _rbExtend.CheckedChanged += (_, _) => OnModeChanged(_rbExtend);
         _cmbSource.SelectedIndexChanged += (_, _) => UpdateSourceHint();
+        _cmbTheme.SelectedIndexChanged += (_, _) => OnThemeChanged();
 
         _timer.Tick += (_, _) => Tick();
         Shown += (_, _) => { _timer.Start(); Tick(); };
@@ -157,25 +168,50 @@ public sealed partial class MainForm : Form
         _btnOpen.Size = new Size(104, 36);
         _btnLogs.Size = new Size(76, 34);
         _btnUsbRefresh.Size = new Size(128, 32);
-        _btnVirtualCfg.Size = new Size(128, 32);
         _btnSave.Size = new Size(112, 36);
         _btnSaveRestart.Size = new Size(158, 36);
+        _cmbTheme.Size = new Size(110, 28);
 
+        StyleInputs();
+    }
+
+    private void StyleInputs()
+    {
         foreach (var input in new Control[]
         {
             _cmbSource, _cmbFps, _numBitrate, _cmbMaxRes, _cmbJpegFps, _cmbJpegWidth,
-            _numHttpPort, _numWsPort, _txtPassword, _cmbCloseAction, _cmbLogLevel,
+            _numHttpPort, _numWsPort, _txtPassword, _cmbCloseAction, _cmbLogLevel, _cmbTheme,
             _rbCopy, _rbExtend, _rbLinkLan, _rbLinkUsb, _rbLinkBoth,
             _chkCursor, _chkInput, _chkAdaptive, _chkLoopbackOnly, _chkAutoStart
         }) UiTheme.StyleInput(input);
     }
 
+    /// <summary>顶栏切换深色 / 浅色：只换调色板并重刷控件，不重建界面。</summary>
+    private void OnThemeChanged()
+    {
+        var mode = _cmbTheme.SelectedIndex == 1 ? UiThemeMode.Light : UiThemeMode.Dark;
+        if (mode == UiTheme.Mode) return;
+
+        UiTheme.SetMode(mode);
+        UiTheme.ApplyFormColors(this);
+        UiTheme.ApplyTheme(this);
+        UiTheme.RefreshChrome();
+        UiTheme.ApplyWindowChrome(Handle);
+        StyleInputs();
+
+        _lblStatus.ForeColor = _host.Running ? UiTheme.Ok : UiTheme.Muted;
+        _ui.Theme = mode == UiThemeMode.Light ? "light" : "dark";
+        _ui.Save();
+        Invalidate(true);
+        Update();
+    }
+
     private void BuildLayout()
     {
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Background };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(84)));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(56)));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(62)));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, H(52)));
         Controls.Add(root);
 
         root.Controls.Add(BuildHeader(), 0, 0);
@@ -191,39 +227,57 @@ public sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 3,
             RowCount = 1,
-            Padding = new Padding(24, 12, 24, 10),
+            Padding = new Padding(16, 4, 16, 4),
             BackColor = UiTheme.Background
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-        var mark = new UiCardPanel { Size = new Size(52, 46), Margin = new Padding(0, 0, 14, 0), Padding = Padding.Empty, AccentBorder = true };
+        // 品牌徽标：琥珀色圆角方块 + 深色字母（顶栏保留品牌）
+        var mark = new UiCardPanel
+        {
+            Brand = true,
+            Size = new Size(H(42), H(42)),
+            Margin = new Padding(0, H(2), H(12), 0),
+            Padding = Padding.Empty
+        };
         mark.Controls.Add(new Label
         {
             Text = "QD",
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = UiTheme.Accent,
-            Font = UiTheme.Display(13f, FontStyle.Bold)
+            BackColor = Color.Transparent,
+            ForeColor = UiTheme.AccentInk,
+            Font = UiTheme.Body(12.5f, FontStyle.Bold)
         });
 
-        var identity = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = UiTheme.Background };
-        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(30)));
+        // 大标题 + 副标题
+        var identity = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = UiTheme.Background,
+            Margin = Padding.Empty
+        };
         identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(24)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         identity.Controls.Add(new Label
         {
             Text = "QDesktopExtension",
             AutoSize = true,
             ForeColor = UiTheme.Text,
-            Font = UiTheme.Display(16f, FontStyle.Bold)
+            Font = UiTheme.Body(13f, FontStyle.Bold),
+            Margin = Padding.Empty
         }, 0, 0);
         identity.Controls.Add(new Label
         {
             Text = "桌面扩展平台  /  DESKTOP EXTENSION",
             AutoSize = true,
             ForeColor = UiTheme.Muted,
-            Font = UiTheme.Body(8.5f)
+            Font = UiTheme.Body(9f),
+            Margin = new Padding(0, H(2), 0, 0)
         }, 0, 1);
 
         var actions = new FlowLayoutPanel
@@ -232,15 +286,19 @@ public sealed partial class MainForm : Form
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             BackColor = UiTheme.Background,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
             Margin = Padding.Empty
         };
         _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
+        _lblStatus.AutoSize = true;
         _lblStatus.BackColor = UiTheme.Background;
-        _lblStatus.Font = UiTheme.Body(9.5f, FontStyle.Bold);
-        _lblStatus.Margin = new Padding(0, 9, 14, 0);
-        _btnLogs.Margin = new Padding(0, 0, 10, 0);
-        _btnStop.Margin = new Padding(0);
-        _btnStart.Margin = new Padding(0);
+        _lblStatus.Font = UiTheme.Body(9f);
+        _lblStatus.Margin = new Padding(0, H(10), H(14), 0);
+        _cmbTheme.Margin = new Padding(0, H(6), H(16), 0);
+        _btnLogs.Margin = new Padding(0, H(4), H(8), 0);
+        _btnStop.Margin = new Padding(0, H(4), H(8), 0);
+        _btnStart.Margin = new Padding(0, H(4), 0, 0);
+        actions.Controls.Add(_cmbTheme);
         actions.Controls.Add(_lblStatus);
         actions.Controls.Add(_btnLogs);
         actions.Controls.Add(_btnStop);
@@ -265,10 +323,10 @@ public sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
-            Padding = HPad(18, 14, 18, 8),
+            Padding = HPad(16, 10, 16, 6),
             BackColor = UiTheme.Background
         };
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, H(124)));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, H(100)));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         body.Controls.Add(BuildAddressCard(), 0, 0);
         body.Controls.Add(BuildTabs(), 0, 1);
@@ -277,15 +335,15 @@ public sealed partial class MainForm : Form
 
     private Control BuildAddressCard()
     {
-        var card = new UiCardPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), AccentBorder = true };
+        var card = new UiCardPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8) };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.Surface };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Surface };
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(26)));
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(34)));
-        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(26)));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(22)));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(30)));
+        text.RowStyles.Add(new RowStyle(SizeType.Absolute, H(22)));
         text.Controls.Add(new Label { Text = "手机 / 平板 / 另一台电脑访问", AutoSize = true, ForeColor = UiTheme.Muted }, 0, 0);
         _lblUrl.ForeColor = UiTheme.Text;
         _lblUrl.AutoSize = false;
@@ -352,7 +410,7 @@ public sealed partial class MainForm : Form
         var card = new UiCardPanel
         {
             Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 0, H(12)),
+            Margin = new Padding(0, 0, 0, H(10)),
             Padding = padding
         };
         page.Controls.Add(card, 0, row);
@@ -427,7 +485,7 @@ public sealed partial class MainForm : Form
 
     private Control BuildFooter()
     {
-        var footer = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface, Padding = new Padding(20, 10, 20, 10) };
+        var footer = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface, Padding = new Padding(20, 6, 20, 6) };
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.Surface };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -481,6 +539,7 @@ public sealed partial class MainForm : Form
             BackColor = UiTheme.Background,
             AutoScroll = true
         };
+        UiTheme.EnableDarkChrome(scroll);
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -489,7 +548,7 @@ public sealed partial class MainForm : Form
             ColumnCount = 1,
             RowCount = 0,
             BackColor = UiTheme.Background,
-            Padding = HPad(16, 16, 16, 16)
+            Padding = HPad(12, 10, 12, 10)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         scroll.Controls.Add(layout);
@@ -504,8 +563,8 @@ public sealed partial class MainForm : Form
         var card = new UiCardPanel
         {
             Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 0, H(12)),
-            Padding = HPad(18, 14, 18, 14)
+            Margin = new Padding(0, 0, 0, H(10)),
+            Padding = HPad(14, 10, 14, 10)
         };
         var stack = new TableLayoutPanel
         {
@@ -514,12 +573,12 @@ public sealed partial class MainForm : Form
             RowCount = description == null ? 2 : 3,
             BackColor = UiTheme.Surface
         };
-        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(32)));
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(28)));
         stack.Controls.Add(SectionTitle(title), 0, 0);
         var formRow = 1;
         if (description != null)
         {
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(36)));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, H(30)));
             stack.Controls.Add(new Label
             {
                 Text = description,
@@ -584,7 +643,7 @@ public sealed partial class MainForm : Form
             }, 0, row);
         }
 
-        control.Margin = new Padding(0, 3, 0, 3);
+        control.Margin = new Padding(0, 2, 0, 2);
         if (control is ComboBox or TextBox || control.Dock == DockStyle.Fill)
             control.Dock = DockStyle.Fill;
         else
@@ -894,52 +953,28 @@ public sealed partial class MainForm : Form
         catch (Exception ex) { SetMsg("打开日志目录失败: " + ex.Message, true); }
     }
 
-    /// <summary>配置软件扩展屏：选窗口 + 画布尺寸。保存配置后由管线按这份清单合成画面。</summary>
-    private void ConfigureVirtualScreen()
-    {
-        var cfg = _host.Config;
-        using var dlg = new VirtualScreenForm(cfg.VirtualWindows, cfg.VirtualScreenWidth, cfg.VirtualScreenHeight);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-
-        // 记下窗口现在的位置，客户端"取消投放"时才好还原
-        foreach (var w in dlg.SelectedWindows)
-        {
-            var rc = WindowSource.GetWindowRectOf(new IntPtr(w.Hwnd));
-            if (rc == null) continue;
-            w.X = rc.Value.X;
-            w.Y = rc.Value.Y;
-            w.W = rc.Value.Width;
-            w.H = rc.Value.Height;
-        }
-
-        cfg.VirtualWindows = dlg.SelectedWindows;
-        cfg.VirtualScreenWidth = dlg.CanvasWidth;
-        cfg.VirtualScreenHeight = dlg.CanvasHeight;
-        cfg.UseVirtualScreen = true;
-
-        // 直接切到"扩展屏 + 软件扩展屏"，用户点保存就能用
-        _rbExtend.Checked = true;
-        RebuildSourceList(null, true);
-        SelectSource(CaptureSource.VirtualSource());
-        UpdateSourceHint();
-        SetMsg($"扩展屏已配置 {cfg.VirtualWindows.Count} 个窗口（{cfg.VirtualScreenWidth}×{cfg.VirtualScreenHeight}）；点【保存并重启服务】后生效");
-    }
-
     private void Tick()
     {
         var stats = _host.Stats;
         if (_host.Running && stats != null)
         {
-            _lblStatus.Text = "● 服务运行中";
+            var status = "● 服务运行中";
+            if (_lblStatus.Text != status) _lblStatus.Text = status;
             _lblStatus.ForeColor = UiTheme.Ok;
-            _lblStats.Text = $"{stats.Fps} fps  ·  {stats.Kbps} kbps  ·  {(_host.Server?.AuthedClients ?? 0)} 台客户端  ·  运行 {stats.UptimeSeconds}s";
+            // 共享管线 + 各块独立扩展屏的统计之和：客户端拿到独立屏后共享管线是停的，
+            // 只显示共享那份会一直是 0 fps，看起来像没连上。
+            var own = _host.ClientScreens?.ActiveFrameStats ?? (Fps: 0, Kbps: 0);
+            var detail = $"{stats.Fps + own.Fps} fps  ·  {stats.Kbps + own.Kbps} kbps  ·  {(_host.Server?.AuthedClients ?? 0)} 台客户端  ·  运行 {stats.UptimeSeconds}s";
+            if (_lblStats.Text != detail) _lblStats.Text = detail;
         }
         else
         {
             var err = _host.LastError ?? "";
-            _lblStatus.Text = err.Length > 0 ? "● 服务异常" : "○ 服务已停止";
+            var status = err.Length > 0 ? "● 服务异常" : "○ 服务已停止";
+            if (_lblStatus.Text != status) _lblStatus.Text = status;
             _lblStatus.ForeColor = err.Length > 0 ? UiTheme.Bad : UiTheme.Muted;
-            _lblStats.Text = err.Length > 0 ? err : "启动服务后，即可从浏览器远程访问这台电脑";
+            var detail = err.Length > 0 ? err : "启动服务后，即可从浏览器远程访问这台电脑";
+            if (_lblStats.Text != detail) _lblStats.Text = detail;
         }
 
         var url = CurrentUrl();
@@ -993,8 +1028,37 @@ public sealed partial class MainForm : Form
 
     // ================= 虚拟扩展屏状态 =================
     private string _lastVddText = "";
+    private volatile bool _vddQuerying;
 
     private void RefreshVddStatus()
+    {
+        // 建屏 / 拔屏会在管理器的锁上停留好几秒（等系统枚举新显示器、等驱动收尾），
+        // 在 UI 线程直接查会把整个面板卡住；放到后台查，结果再回贴。
+        if (_vddQuerying) return;
+        _vddQuerying = true;
+        Task.Run(() =>
+        {
+            string text;
+            try { text = DescribeVddStatus(); }
+            catch { text = _lastVddText; }
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    _vddQuerying = false;
+                    if (text == _lastVddText) return;
+                    _lblVdd.Text = text;
+                    _lastVddText = text;
+                }));
+            }
+            catch
+            {
+                _vddQuerying = false;   // 窗体已关闭，忽略
+            }
+        });
+    }
+
+    private string DescribeVddStatus()
     {
         var screens = _host.ClientScreens;
         string text;
@@ -1011,10 +1075,21 @@ public sealed partial class MainForm : Form
         else
         {
             var list = screens.SnapshotScreens();
-            var head = $"驱动就绪 · 已建 {list.Count}/{ParsecVdd.MaxClientScreens} 块";
-            if (list.Count == 0)
+            var clients = _host.Server?.AuthedClients ?? 0;
+            var head = $"驱动就绪 · 已建 {list.Count}/{ParsecVdd.MaxClientScreens} 块 · 当前 {clients} 台设备在线";
+            if (screens.ScreenPending)
             {
-                text = head + "。有设备接入时会自动插一块新显示器并推给它独立画面";
+                text = head + $"；新显示器已插入，正在等 Windows 接入桌面（已等 {screens.PendingWaitSeconds} 秒），接入后会自动切到独立屏";
+            }
+            else if (screens.ScreenGiveUp)
+            {
+                text = head + "；独立扩展屏创建失败，当前退回共享画面（重启服务可重试）";
+            }
+            else if (list.Count == 0)
+            {
+                text = clients > 0
+                    ? head + "；正在为接入的设备准备扩展屏…"
+                    : head + "。有设备接入时会自动插一块新显示器并推给它独立画面";
             }
             else
             {
@@ -1022,11 +1097,7 @@ public sealed partial class MainForm : Form
                     $"{s.Device} ({s.Size}) ← {s.Ip}{(s.Orphan ? "（已断开，等待重连）" : "")}"));
             }
         }
-        if (text != _lastVddText)
-        {
-            _lblVdd.Text = text;
-            _lastVddText = text;
-        }
+        return text;
     }
 
     // ================= 关闭行为 =================

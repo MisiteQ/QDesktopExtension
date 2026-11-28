@@ -13,45 +13,26 @@ public sealed partial class MainForm
         var page = NewPage(AboutTabText);
         var layout = PageGrid(page);
 
-        // 品牌头：沿用卡片语言，左侧应用标记，右侧名称 / 版本 / 一句话定位
-        var hero = AddBareCard(layout, 140, HPad(20, 16, 20, 16));
-        var heroGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.Surface };
-        heroGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, H(80)));
-        heroGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        var mark = new UiCardPanel
-        {
-            Size = new Size(H(64), H(64)),
-            Margin = new Padding(0, H(4), H(16), 0),
-            Padding = Padding.Empty,
-            AccentBorder = true
-        };
-        mark.Controls.Add(new Label
-        {
-            Text = "QD",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = UiTheme.Accent,
-            Font = UiTheme.Display(15f, FontStyle.Bold)
-        });
-
+        // 原生写法：一行程序名 + 版本，一行定位说明，不再放品牌大图标
+        var hero = AddBareCard(layout, 88, HPad(14, 8, 14, 8));
         var identity = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.Surface };
-        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(34)));
-        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(24)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(26)));
+        identity.RowStyles.Add(new RowStyle(SizeType.Absolute, H(22)));
         identity.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         identity.Controls.Add(new Label
         {
-            Text = "QDesktopExtension",
+            Text = $"QDesktopExtension　v{AppVersion()}",
             AutoSize = true,
             ForeColor = UiTheme.Text,
-            Font = UiTheme.Display(16f, FontStyle.Bold)
+            Font = UiTheme.Body(11f, FontStyle.Bold),
+            Margin = Padding.Empty
         }, 0, 0);
         identity.Controls.Add(new Label
         {
-            Text = $"版本 {AppVersion()}　·　桌面扩展平台",
+            Text = "桌面扩展平台",
             AutoSize = true,
             ForeColor = UiTheme.Muted,
-            Font = UiTheme.Body(9f)
+            Margin = Padding.Empty
         }, 0, 1);
         identity.Controls.Add(new Label
         {
@@ -59,19 +40,16 @@ public sealed partial class MainForm
             AutoSize = false,
             Dock = DockStyle.Fill,
             ForeColor = UiTheme.Muted,
-            Font = UiTheme.Body(9f)
+            Margin = Padding.Empty
         }, 0, 2);
+        hero.Controls.Add(identity);
 
-        heroGrid.Controls.Add(mark, 0, 0);
-        heroGrid.Controls.Add(identity, 1, 0);
-        hero.Controls.Add(heroGrid);
-
-        var author = AddCard(layout, 174, "作者与项目");
+        var author = AddCard(layout, 160, "作者与项目");
         AddRow(author, "作者", ValueLabel(AuthorName), 36);
         AddRow(author, "GitHub", ValueLink(AuthorUrl), 36);
         AddWideRow(author, Hint("个人项目，欢迎在 GitHub 上交流或反馈问题。"), 38);
 
-        var runtime = AddCard(layout, 248, "运行环境");
+        var runtime = AddCard(layout, 234, "运行环境");
         AddRow(runtime, "程序版本", ValueLabel("v" + AppVersion()), 36);
         AddRow(runtime, "运行时", ValueLabel($".NET {Environment.Version}"), 36);
         AddRow(runtime, "操作系统", ValueLabel(RuntimeInformation.OSDescription), 36);
@@ -81,7 +59,7 @@ public sealed partial class MainForm
         copy.Click += (_, _) => CopyVersionInfo();
         AddRow(runtime, "", copy, 40);
 
-        var credits = AddCard(layout, 202, "组件与致谢");
+        var credits = AddCard(layout, 190, "组件与致谢");
         AddRow(credits, "Fleck", ValueLabel("WebSocket 服务端"), 32);
         AddRow(credits, "FFmpeg", ValueLabel("H.264 编码与 MP4 封装"), 32);
         AddRow(credits, "Parsec VDD", ValueLabel("虚拟扩展屏驱动"), 32);

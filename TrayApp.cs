@@ -26,13 +26,7 @@ public sealed class TrayApp : ApplicationContext
             Visible = true
         };
 
-        var menu = new ContextMenuStrip
-        {
-            Renderer = new UiToolStripRenderer(),
-            BackColor = UiTheme.Surface,
-            ForeColor = UiTheme.Text,
-            Font = UiTheme.Body(9f)
-        };
+        var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("打开设置面板", null, (_, _) => ShowForm()));
         menu.Items.Add(new ToolStripMenuItem("打开网页", null, (_, _) => OpenWeb()));
         menu.Items.Add(new ToolStripSeparator());

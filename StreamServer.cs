@@ -68,19 +68,11 @@ public sealed class StreamServer : IDisposable
     private int _mseGeneration;         // MSE 客户端接入代次，供管线判断是否需要重开封装器
     private bool _keyFrameRequested = true;
 
-    // 热路径复用缓冲：BroadcastFrame/BroadcastFmp4 在编码管线线程，BroadcastJpeg 在 JPEG 线程，
-    // 各自独占一个缓冲与目标列表，避免每帧分配。仅各自线程访问，无需加锁。
-    private byte[]? _encPacket;
-    private byte[]? _jpegPacket;
+    // 热路径不要复用发送缓冲：Fleck 的 conn.Send(byte[]) 是"入队后异步写出"，
+    // Send 返回时数据往往还没真正发到网络上；下一帧立刻覆盖同一块缓冲会发出串包数据
+    // （客户端表现为花屏、解码失败、反复重连）。每帧单独分配一份，代价可以忽略。
     private List<(IWebSocketConnection conn, string ip)>? _encTargets;
     private List<(IWebSocketConnection conn, string ip)>? _jpegTargets;
-
-    /// <summary>复用缓冲：容量不足时扩容，否则复用现有数组，避免每帧分配。</summary>
-    private static byte[] EnsureBuffer(ref byte[]? buf, int len)
-    {
-        if (buf == null || buf.Length < len) buf = new byte[len];
-        return buf;
-    }
 
     public StreamServer(ConfigModel cfg, Logger logger, AccessControl acl, TrafficStat traffic,
                         TouchForwarder touch, StreamStats stats)
@@ -110,7 +102,9 @@ public sealed class StreamServer : IDisposable
     {
         get
         {
-            lock (_lock) return _clients.Values.Count(c => c.Authed);
+            // 必须带 IsAvailable：Fleck 的关闭回调可能晚于连接真正断开，
+            // 只数 Authed 会把已经断掉的连接也算成"在线"，面板就会显示假数字。
+            lock (_lock) return _clients.Count(kv => kv.Value.Authed && kv.Key.IsAvailable);
         }
     }
 
@@ -738,15 +732,15 @@ public sealed class StreamServer : IDisposable
     /// <summary>把一帧编码数据发给所有已鉴权客户端；首字节标记是否关键帧。</summary>
     public void BroadcastFrame(byte[] data, bool keyFrame)
     {
-        // 复用编码管线线程的发送缓冲，避免每帧分配
-        var packet = EnsureBuffer(ref _encPacket, data.Length + 1);
+        // 每帧一份独立缓冲：发送是异步入队的，复用会被下一帧覆盖
+        var packet = new byte[data.Length + 1];
         packet[0] = keyFrame ? (byte)1 : (byte)0;
         Buffer.BlockCopy(data, 0, packet, 1, data.Length);
 
         if (keyFrame)
         {
-            // 复用缓冲会被下一帧覆盖，关键帧要独立存一份供新客户端补发
-            lock (_videoLock) _lastKeyPacket = (byte[])packet.Clone();
+            // 关键帧要独立存一份供新客户端补发
+            lock (_videoLock) _lastKeyPacket = packet;
         }
 
         var targets = _encTargets ??= new List<(IWebSocketConnection conn, string ip)>();
@@ -847,8 +841,8 @@ public sealed class StreamServer : IDisposable
     /// <summary>推一段 fMP4 分片：首字节 3 作为类型标记。</summary>
     public void BroadcastFmp4(byte[] fragment)
     {
-        // 复用编码管线线程的发送缓冲，避免每帧分配
-        var packet = EnsureBuffer(ref _encPacket, fragment.Length + 1);
+        // 每帧一份独立缓冲：发送是异步入队的，复用会被下一帧覆盖
+        var packet = new byte[fragment.Length + 1];
         packet[0] = 3;
         Buffer.BlockCopy(fragment, 0, packet, 1, fragment.Length);
 
@@ -882,8 +876,8 @@ public sealed class StreamServer : IDisposable
     /// <summary>推一帧 JPEG：首字节 2 作为类型标记，其余是完整 JPEG 数据。</summary>
     public void BroadcastJpeg(byte[] jpeg)
     {
-        // 复用 JPEG 线程的发送缓冲，避免每帧分配
-        var packet = EnsureBuffer(ref _jpegPacket, jpeg.Length + 1);
+        // 每帧一份独立缓冲：发送是异步入队的，复用会被下一帧覆盖
+        var packet = new byte[jpeg.Length + 1];
         packet[0] = 2;
         Buffer.BlockCopy(jpeg, 0, packet, 1, jpeg.Length);
 
